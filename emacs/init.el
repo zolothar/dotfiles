@@ -280,13 +280,12 @@
 (global-set-key (kbd "C-c c") #'org-capture)
 (global-set-key (kbd "C-c a") #'org-agenda)
 
-;; TODO states with a waiting stage. Letters in parentheses are quick
-;; selectors; @ prompts for a note, ! records a timestamp.
+;; TODO states
 (setq org-todo-keywords
-      '((sequence "TODO(t)" "NEXT(n)" "WAIT(w@/!)"
-                  "|" "DONE(d!)" "CANCELLED(c@)"))
-      org-log-done 'time
-      org-log-into-drawer t)
+      '((sequence "TODO(t)" "NEXT(n)" "WAIT(w)"
+                  "|" "DONE(d)" "CANCELLED(c)"))
+      org-log-done nil
+      org-log-into-drawer nil)
 
 ;; C-c C-w moves a heading to any file in the agenda, with completion
 (setq org-refile-targets '((org-agenda-files :maxlevel . 3))
