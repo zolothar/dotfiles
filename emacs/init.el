@@ -884,18 +884,7 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 (use-package vterm
   :custom
   (vterm-max-scrollback 10000)
-  (vterm-kill-buffer-on-exit t)
-  :bind (("C-c t" . my/vterm-project)
-         :map vterm-mode-map
-         ("C-c t" . delete-window)))     ; same key hides it again
-
-(defun my/vterm-project ()
-  "Open vterm in the project root, or in default-directory outside a project."
-  (interactive)
-  (let ((default-directory (or (when-let ((proj (project-current)))
-                                 (project-root proj))
-                               default-directory)))
-    (vterm)))
+  (vterm-kill-buffer-on-exit nil))
 
 ;; Terminal and compilation output live in a bottom side window
 (add-to-list 'display-buffer-alist
@@ -908,12 +897,15 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 
 (use-package multi-vterm
   :after vterm
-  :bind (("C-c t"   . multi-vterm-project)
-         ("C-c T"   . multi-vterm)
-         ("C-c C-n" . multi-vterm-next)
-         ("C-c C-p" . multi-vterm-prev))
+  :bind (("C-c t" . multi-vterm-project)      ; one session per project
+         ("C-c T" . multi-vterm)              ; another session here
+         :map vterm-mode-map
+         ("C-c t" . delete-window)            ; same key hides it again
+         ("M-n"   . multi-vterm-next)         ; cycle sessions, terminal only
+         ("M-p"   . multi-vterm-prev))
   :custom
   (multi-vterm-dedicated-window-height-percent 30))
+
 ;; --------------------------------------------------
 ;; 16. Treemacs
 ;; --------------------------------------------------
