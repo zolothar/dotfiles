@@ -65,7 +65,7 @@
 
 ;; Height is in 1/10 pt, so 120 = 12pt.
 ;; This is the only absolute size; everything else is relative to it.
-(set-face-attribute 'default nil :family "JetBrains Mono" :height 120)
+(set-face-attribute 'default nil :family "JetBrains Mono" :height 110)
 
 ;; `fixed-pitch' is used wherever alignment matters: code blocks,
 ;; tables, verbatim text. `variable-pitch' is used for prose.
