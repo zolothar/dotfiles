@@ -63,7 +63,6 @@
 ;; 2. Fonts
 ;; --------------------------------------------------
 
-;; Height is in 1/10 pt, so 120 = 12pt.
 ;; This is the only absolute size; everything else is relative to it.
 (set-face-attribute 'default nil :family "JetBrains Mono" :height 110)
 
@@ -73,6 +72,11 @@
 (set-face-attribute 'fixed-pitch nil :family "JetBrains Mono" :height 1.0)
 (set-face-attribute 'variable-pitch nil :family "Inter" :height 1.0)
 
+;; Machine-specific overrides: font size, paths, keyboard, etc.
+;; Loaded last so it can override anything set above.
+(let ((local (expand-file-name "local.el" user-emacs-directory)))
+  (when (file-exists-p local)
+    (load local)))
 ;; --------------------------------------------------
 ;; 3. Package management
 ;; --------------------------------------------------
