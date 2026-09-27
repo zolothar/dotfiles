@@ -39,6 +39,22 @@
 ;; (line continuation, errors, etc.)
 (set-fringe-mode 10)
 
+;; Programs installed outside the system PATH. Set early, so every
+;; later executable-find sees them. A GUI Emacs on macOS does not
+;; inherit the shell PATH at all, hence the Homebrew entries.
+(dolist (dir (append (list (expand-file-name "~/.local/bin"))  ; pipx
+                     (when (eq system-type 'darwin)
+                       '("/opt/homebrew/bin" "/opt/homebrew/sbin"))))
+  (when (file-directory-p dir)
+    (add-to-list 'exec-path dir)
+    (setenv "PATH" (concat dir ":" (getenv "PATH")))))
+
+;; macOS keyboard: Command is Meta, Option stays free for typing
+;; special characters
+(when (eq system-type 'darwin)
+  (setq mac-command-modifier 'meta
+        mac-option-modifier 'none))
+
 ;; Stay completely silent on errors: no sound, no flashing
 (setq visible-bell nil
       ring-bell-function #'ignore)
@@ -66,14 +82,9 @@
 ;; This is the only absolute size; everything else is relative to it.
 (set-face-attribute 'default nil :family "JetBrains Mono" :height 110)
 
-;; `fixed-pitch' is used wherever alignment matters: code blocks,
-;; tables, verbatim text. `variable-pitch' is used for prose.
-;; Height 1.0 means "same as default", so both scale together.
-(set-face-attribute 'fixed-pitch nil :family "JetBrains Mono" :height 1.0)
-(set-face-attribute 'variable-pitch nil :family "Inter" :height 1.0)
-
-;; Machine-specific overrides: font size, paths, keyboard, etc.
-;; Loaded last so it can override anything set above.
+;; Machine-specific overrides. Only what genuinely differs between
+;; machines belongs there (font size); everything OS-dependent is
+;; handled in this file with system-type checks.
 (let ((local (expand-file-name "local.el" user-emacs-directory)))
   (when (file-exists-p local)
     (load local)))
@@ -258,8 +269,10 @@
 ;; agenda groups, timeblock colours.
 
 (defvar my/org-areas
-  '("routine" "home" "work" "coding" "road" "workouts" "fun" "system")
-  "Areas of life. Used as Org CATEGORY and as a tag.")
+  '("routine" "home" "work" "coding" "road" "workouts" "fun" "system" "social")
+  "Areas of life. Used as Org CATEGORY and as a tag.
+Adding one here also needs a group in `org-super-agenda-groups' and a
+colour in `my/org-area-colors' (section 10).")
 
 (defvar my/org-types
   '("project" "knowledge" "calendar")
@@ -292,6 +305,40 @@
   (dolist (area my/org-areas)
     (make-directory (expand-file-name (concat dir "/" area) my/org-dir) t)))
 
+;; --- Area and topic prompts -----------------------
+;; Shared by org-capture (section 10) and org-roam (section 14).
+;; Ask once per capture and reuse the answer everywhere in a template:
+;; in the path, the property, the category and the tag.
+(defvar my/org-area-choice nil)
+(defvar my/org-topic-choice nil)
+
+(defun my/org-pick-area ()
+  "Return the area for the capture in progress, asking once."
+  (or my/org-area-choice
+      (setq my/org-area-choice
+            (completing-read "Area: " my/org-areas nil t))))
+
+(defun my/org-pick-topic ()
+  "Return the knowledge topic, asking once.
+Completes over topics that already exist for the chosen area, but any
+new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
+  (or my/org-topic-choice
+      (setq my/org-topic-choice
+            (let* ((dir (expand-file-name
+                         (concat "knowledge/" (my/org-pick-area)) my/org-dir))
+                   (existing
+                    (when (file-directory-p dir)
+                      (seq-remove
+                       (lambda (d) (string= d "attachments"))
+                       (seq-filter
+                        (lambda (d) (file-directory-p (expand-file-name d dir)))
+                        (directory-files dir nil "\\`[^.]"))))))
+              (completing-read "Topic: " existing nil nil)))))
+
+(add-hook 'org-capture-after-finalize-hook
+          (lambda () (setq my/org-area-choice nil
+                           my/org-topic-choice nil)))
+
 ;; --- Tags and properties --------------------------
 
 ;; Types are mutually exclusive, areas are not enforced but listed
@@ -299,7 +346,6 @@
 (setq org-tag-alist
       `((:startgroup)
         ("project"   . ?p)
-        ("research"  . ?r)
         ("knowledge" . ?k)
         ("calendar"  . ?C)
         (:endgroup)
@@ -324,8 +370,8 @@
 ;; --------------------------------------------------
 
 ;; --- Which files the agenda scans -----------------
-;; Only tasks and calendar blocks. Knowledge and research files hold no
-;; scheduled items, so scanning them would only slow the agenda down.
+;; Only tasks and calendar blocks. Knowledge files hold no scheduled
+;; items, so scanning them would only slow the agenda down.
 ;; org-roam still indexes everything (section 14).
 
 (defun my/org-agenda-files ()
@@ -349,8 +395,7 @@
 (setq org-default-notes-file (expand-file-name "inbox.org" my/org-dir))
 
 ;; %a inserts a link back to wherever capture was invoked from.
-;; %^{Area|...} offers completion; asking twice with the same prompt
-;; name reuses the first answer.
+;; %(my/org-pick-area) asks for the area once and reuses the answer.
 (setq org-capture-templates
       '(("t" "Task to inbox" entry
          (file "~/org/inbox.org")
@@ -358,7 +403,7 @@
 
         ("s" "Scheduled task" entry
          (file "~/org/inbox.org")
-         "* TODO %? :%^{Area|work|coding|home|system|workouts|fun|routine|road}:\n  SCHEDULED: %^{When}T\n  %U"
+         "* TODO %? :%(my/org-pick-area):\n  SCHEDULED: %^{When}T\n  %U"
          :empty-lines 1)
 
         ("n" "Note to inbox" entry
@@ -375,7 +420,7 @@
 
         ("e" "Calendar event" entry
          (file+headline "~/org/calendar/events.org" "Events")
-         "* %^{Title} :%^{Area|work|coding|home|system|workouts|fun|routine|road}:\n  %^{When}T"
+         "* %^{Title} :%(my/org-pick-area):\n  :PROPERTIES:\n  :CATEGORY: %(my/org-pick-area)\n  :END:\n  %^{When}T"
          :empty-lines 1)))
 
 (global-set-key (kbd "C-c c") #'org-capture)
@@ -426,8 +471,11 @@
 (use-package org-super-agenda
   :after org-agenda
   :config
+  ;; Everything with a time of day lands in the first group and is laid
+  ;; out on the time grid. The area groups below hold only untimed
+  ;; items: tasks without an hour, deadlines, inbox.
   (setq org-super-agenda-groups
-        '((:name "Now"        :time-grid t         :order 1)
+        '((:name "Schedule"   :time-grid t         :order 1)
           (:name "Overdue"    :deadline past       :order 2)
           (:name "Due today"  :deadline today      :order 3)
           (:name "Work"       :category "work"     :order 10)
@@ -436,6 +484,7 @@
           (:name "Home"       :category "home"     :order 13)
           (:name "Workouts"   :category "workouts" :order 14)
           (:name "Fun"        :category "fun"      :order 15)
+          (:name "Social"     :category "social"   :order 16)
           (:name "Road"       :category "road"     :order 20)
           (:name "Routine"    :category "routine"  :order 21)
           (:name "Inbox"      :file-path "inbox"   :order 30)))
@@ -475,51 +524,189 @@
 
 ;; --- Visual timeblocking --------------------------
 
+;; org-timeblock wants a face NAME per tag, not a list of colours.
+;; One face per area, coloured from the Kanagawa palette. Routine and
+;; road are deliberately dim: they are background, not work. An area
+;; missing here is simply drawn in org-timeblock's default colours.
+(defvar my/org-area-colors
+  '(("routine"  "#2a2a37" "#727169")
+    ("road"     "#2a2a37" "#727169")
+    ("work"     "#2d4f67" "#c8c093")
+    ("coding"   "#43242b" "#c8c093")
+    ("system"   "#49443c" "#c8c093")
+    ("home"     "#223249" "#c8c093")
+    ("workouts" "#2b3328" "#c8c093")
+    ("fun"      "#54536d" "#c8c093")
+    ("social"   "#3f3452" "#c8c093"))
+  "Area to (BACKGROUND FOREGROUND) for timeblocks.")
+
+(dolist (spec my/org-area-colors)
+  (custom-declare-face
+   (intern (concat "my-timeblock-" (car spec)))
+   `((t :background ,(nth 1 spec) :foreground ,(nth 2 spec)))
+   (format "Timeblock face for the %s area." (car spec))))
+
 (use-package org-timeblock
   :bind ("C-c b" . org-timeblock)
   :config
-  ;; Colours keyed by area tag. Routine is deliberately dim: it is
-  ;; background, not work.
   (setq org-timeblock-tag-colors
-        '(("routine"  . (:background "#2a2a37" :foreground "#727169"))
-          ("road"     . (:background "#2a2a37" :foreground "#727169"))
-          ("work"     . (:background "#2d4f67" :foreground "#c8c093"))
-          ("coding"   . (:background "#43242b" :foreground "#c8c093"))
-          ("system"   . (:background "#49443c" :foreground "#c8c093"))
-          ("home"     . (:background "#223249" :foreground "#c8c093"))
-          ("workouts" . (:background "#2b3328" :foreground "#c8c093"))
-          ("fun"      . (:background "#54536d" :foreground "#c8c093")))))
+        (mapcar (lambda (spec)
+                  (cons (car spec) (intern (concat "my-timeblock-" (car spec)))))
+                my/org-area-colors)))
 
 ;; --- Queries (the Dataview replacement) -----------
 
 (use-package org-ql
   :bind ("C-c q" . org-ql-search))
 
+;; --- Rescan agenda files --------------------------
+;; The file list is built at startup. Rebuild it whenever something
+;; reads it, so new projects and generated weeks appear without a
+;; restart: the agenda, org-timeblock and the week generator.
+(defun my/org-agenda-files-refresh (&rest _)
+  "Rebuild `org-agenda-files' from disk."
+  (setq org-agenda-files (my/org-agenda-files)))
+
+(advice-add 'org-agenda :before #'my/org-agenda-files-refresh)
+(with-eval-after-load 'org-timeblock
+  (advice-add 'org-timeblock :before #'my/org-agenda-files-refresh))
+
+;; --- Week generation from day templates -----------
+;;
+;;   templates/<day>-template.org  one file per day, any fixed date inside
+;;   my/org-week-plan              which template falls on which weekday
+;;   calendar/<YYYY>-W<NN>.org     generated week, edited freely afterwards
+;;
+;; A template is a flat chronological list: a heading, one area tag, one
+;; timestamp. The generator moves the timestamps to the target date and
+;; derives each block's CATEGORY from its area tag. Generated blocks
+;; carry no repeaters, so any single block can be deleted, moved or
+;; stretched without touching other days.
+
+(defvar my/org-template-dir (expand-file-name "templates" my/org-dir)
+  "Day templates. Not scanned by the agenda, excluded from org-roam.")
+
+(defvar my/org-week-plan
+  '((1 . "monday-template")
+    (2 . "tuesday-template")
+    (3 . "wednesday-template")
+    (4 . "thursday-template")
+    (5 . "friday-template")
+    (6 . "saturday-template")
+    (0 . "sunday-template"))
+  "Weekday number (0 = Sunday) to a template name in `my/org-template-dir'.
+Several weekdays may point at the same template.")
+
+(defun my/org-date+ (time n)
+  "Return TIME shifted by N days. Uses decoded time, so DST-safe."
+  (let ((d (decode-time time)))
+    (setf (decoded-time-day d) (+ (decoded-time-day d) n))
+    (encode-time d)))
+
+(defun my/org-monday-of (time)
+  "Return the Monday of the week containing TIME."
+  (let ((dow (decoded-time-weekday (decode-time time))))
+    (my/org-date+ time (- (mod (- dow 1) 7)))))
+
+(defun my/org-blocks--render (template date)
+  "Return TEMPLATE's blocks moved to DATE, or nil if TEMPLATE is missing."
+  (let ((file (expand-file-name (concat template ".org") my/org-template-dir))
+        (stamp (let ((system-time-locale "C"))
+                 (format-time-string "%Y-%m-%d %a" date))))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        ;; Drop the template's header: #+keywords, blank lines and a
+        ;; file-level property drawer, if one was ever added
+        (goto-char (point-min))
+        (while (and (not (eobp))
+                    (cond ((looking-at-p "^\\(#\\+\\|[ \t]*$\\)")
+                           (forward-line 1) t)
+                          ((looking-at-p "^[ \t]*:PROPERTIES:")
+                           (re-search-forward "^[ \t]*:END:" nil 'move)
+                           (forward-line 1) t))))
+        (delete-region (point-min) (point))
+        ;; Move every timestamp to DATE, keeping the times
+        (goto-char (point-min))
+        (while (re-search-forward
+                "<[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} [^ >]+" nil t)
+          (replace-match (concat "<" stamp) t t))
+        ;; CATEGORY from the area tag
+        (delay-mode-hooks (org-mode))
+        (org-map-entries
+         (lambda ()
+           (when-let ((area (seq-find (lambda (tag) (member tag my/org-areas))
+                                      (org-get-tags nil t))))
+             (org-set-property "CATEGORY" area))))
+        ;; Demote by one level to nest under the day heading
+        (goto-char (point-min))
+        (while (re-search-forward "^\\*" nil t)
+          (replace-match "**"))
+        (buffer-string)))))
+
+(defun my/org-week--write (start)
+  "Write the generated week containing START. Return the file name."
+  (let* ((monday (my/org-monday-of start))
+         (file (expand-file-name
+                (let ((system-time-locale "C"))
+                  (format-time-string "%G-W%V.org" monday))
+                (expand-file-name "calendar" my/org-dir))))
+    (if (and (file-exists-p file)
+             (not (y-or-n-p (format "%s exists, overwrite? "
+                                    (file-name-nondirectory file)))))
+        (message "Skipped %s" (file-name-nondirectory file))
+      (with-temp-file file
+        (insert (let ((system-time-locale "C"))
+                  (format-time-string
+                   "#+title: Week of %Y-%m-%d\n\n"
+                   monday)))
+        (dotimes (n 7)
+          (let* ((date (my/org-date+ monday n))
+                 (dow (decoded-time-weekday (decode-time date)))
+                 (template (cdr (assq dow my/org-week-plan)))
+                 (body (and template (my/org-blocks--render template date))))
+            (insert (let ((system-time-locale "C"))
+                      (format-time-string "* %Y-%m-%d %a\n" date)))
+            (cond (body (insert body) (unless (bolp) (insert "\n")))
+                  (template (insert (format "No template: %s\n" template)))))))
+      (my/org-agenda-files-refresh))
+    file))
+
+(defun my/org-week-generate (start)
+  "Generate the week containing START from day templates and open it."
+  (interactive (list (org-read-date nil t nil "Any day of the week")))
+  (find-file (my/org-week--write start)))
+
+(defun my/org-weeks-generate (start count)
+  "Generate COUNT consecutive weeks, the first one containing START."
+  (interactive (list (org-read-date nil t nil "Any day of the first week")
+                     (read-number "Weeks: " 4)))
+  (dotimes (i count)
+    (my/org-week--write (my/org-date+ start (* 7 i))))
+  (message "Generated %d week(s)" count))
+
+(global-set-key (kbd "C-c n w") #'my/org-week-generate)
+(global-set-key (kbd "C-c n W") #'my/org-weeks-generate)
+
 ;; --------------------------------------------------
 ;; 11. Org reading and writing
 ;; --------------------------------------------------
-
-;; Center the text column instead of letting it span the whole window
-(defun my/org-reading-setup ()
-  "Center Org text in a fixed-width column."
-  (setq visual-fill-column-width 120
-        visual-fill-column-center-text t)
-  (visual-fill-column-mode 1))
-
-(use-package visual-fill-column
-  :hook (org-mode . my/org-reading-setup))
 
 ;; Reveal hidden markup only while the cursor is inside it
 (use-package org-appear
   :hook (org-mode . org-appear-mode))
 
-;; Proportional font for prose, monospace where alignment matters
-(use-package mixed-pitch
-  :hook (org-mode . mixed-pitch-mode))
+(setq org-auto-align-tags nil
+      org-tags-column 0
+      org-catch-invisible-edits 'show-and-error
+      org-special-ctrl-a/e t
+      org-insert-heading-respect-content t
+      org-pretty-entities t
+      org-ellipsis "…")
 
 ;; Screenshots and clipboard images straight into a note.
-;; Requires scrot and xclip on X11; on Wayland use grim + slurp and set
-;; org-download-screenshot-method to "grim -g \"$(slurp)\" %s"
+;; Linux needs scrot and xclip on X11; on Wayland install grim + slurp
+;; and use "grim -g \"$(slurp)\" %s" instead. macOS has screencapture.
 (use-package org-download
   :after org
   :bind (:map org-mode-map
@@ -530,7 +717,8 @@
   ;; attachments folder and survive the note being moved.
   (setq org-download-method 'attach
         org-download-heading-lvl nil
-        org-download-screenshot-method "scrot -s %s"))
+        org-download-screenshot-method
+        (if (eq system-type 'darwin) "screencapture -i %s" "scrot -s %s")))
 
 ;; --- Attachments ----------------------------------
 ;; Storage location comes from the :DIR: property set by the capture
@@ -576,9 +764,13 @@
 ;; commands take the HTML flavour and run it through pandoc.
 
 (defvar my/clipboard-html-command
-  (cond ((executable-find "wl-paste") "wl-paste --no-newline --type text/html")
-        ((executable-find "xclip")    "xclip -selection clipboard -t text/html -o")
-        ((executable-find "pbpaste")  "osascript -e 'the clipboard as \"HTML\"'"))
+  (cond ((eq system-type 'darwin)
+         ;; osascript prints the HTML hex-encoded as <<data HTML3C68...>>;
+         ;; perl pulls out the hex digits and decodes them
+         (concat "osascript -e 'the clipboard as \"HTML\"' 2>/dev/null"
+                 " | perl -ne 'print pack(\"H*\", $1) if /HTML([0-9A-Fa-f]+)/'"))
+        ((executable-find "wl-paste") "wl-paste --no-newline --type text/html")
+        ((executable-find "xclip")    "xclip -selection clipboard -t text/html -o"))
   "Shell command returning the clipboard's text/html flavour, if any.")
 
 (defun my/clipboard-html ()
@@ -644,7 +836,11 @@ and rewrite its link to point at the local copy."
 ;; 13. Org babel
 ;; --------------------------------------------------
 
-(setq org-plantuml-jar-path (expand-file-name "~/packages/jar/plantuml.jar"))
+;; First jar that exists: a manual download on Linux, Homebrew on macOS
+(setq org-plantuml-jar-path
+      (seq-find #'file-exists-p
+                (list (expand-file-name "~/packages/jar/plantuml.jar")
+                      "/opt/homebrew/opt/plantuml/libexec/plantuml.jar")))
 
 ;; One call only: org-babel-do-load-languages replaces the language
 ;; list rather than adding to it, so separate calls cancel each other.
@@ -676,7 +872,7 @@ and rewrite its link to point at the local copy."
   (org-roam-completion-everywhere t)
   ;; Skip generated and archived material
   (org-roam-file-exclude-regexp
-   '("/archive/" "/templates/" "/attachments/" "/\\.git/"))
+   '("/archive/" "/templates/" "/calendar/" "/attachments/" "/\\.git/"))
   :bind (("C-c n f" . org-roam-node-find)
          ("C-c n i" . org-roam-node-insert)
          ("C-c n c" . org-roam-capture)
@@ -710,38 +906,6 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
 
   (org-roam-db-autosync-mode))
 
-;; Ask for the area once per capture and reuse the answer everywhere
-;; in the template: in the path, the property, the category, the tag.
-(defvar my/org-area-choice nil)
-(defvar my/org-topic-choice nil)
-
-(defun my/org-pick-area ()
-  "Return the area for the capture in progress, asking once."
-  (or my/org-area-choice
-      (setq my/org-area-choice
-            (completing-read "Area: " my/org-areas nil t))))
-
-(defun my/org-pick-topic ()
-  "Return the knowledge topic, asking once.
-Completes over topics that already exist for the chosen area, but any
-new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
-  (or my/org-topic-choice
-      (setq my/org-topic-choice
-            (let* ((dir (expand-file-name
-                         (concat "knowledge/" (my/org-pick-area)) my/org-dir))
-                   (existing
-                    (when (file-directory-p dir)
-                      (seq-remove
-                       (lambda (d) (string= d "attachments"))
-                       (seq-filter
-                        (lambda (d) (file-directory-p (expand-file-name d dir)))
-                        (directory-files dir nil "\\`[^.]"))))))
-              (completing-read "Topic: " existing nil nil)))))
-
-(add-hook 'org-capture-after-finalize-hook
-          (lambda () (setq my/org-area-choice nil
-                           my/org-topic-choice nil)))
-
 ;; org-capture will not create missing directories on its own
 (add-hook 'org-roam-capture-new-node-hook
           (lambda ()
@@ -756,22 +920,16 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 ;; becomes a global buffer property that every heading inherits, which
 ;; is what org-attach needs to skip its data/<id>/ store.
 (setq org-roam-capture-templates
-      '(("p" "project" plain ""
+      '(("p" "project" plain "%?"
          :target (file+head
                   "projects/%(my/org-pick-area)/${title}/${title}.org"
-                  ":PROPERTIES:\n:TYPE: project\n:AREA: %(my/org-pick-area)\n:STATUS: active\n:STARTED: %U\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :project:%(my/org-pick-area):\n#+property: DIR attachments\n\n* Tasks\n\n** TODO %?\n\n*** Result\n\n* Links\n\n* Log\n")
+                  ":PROPERTIES:\n:TYPE: project\n:AREA: %(my/org-pick-area)\n:STATUS: active\n:STARTED: [%<%Y-%m-%d %a>]\n:FINISHED:\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :project:%(my/org-pick-area):\n#+property: DIR attachments\n\n* Tasks\n")
          :unnarrowed t)
 
         ("k" "knowledge" plain "%?"
          :target (file+head
                   "knowledge/%(my/org-pick-area)/%(my/org-pick-topic)/${title}.org"
                   ":PROPERTIES:\n:TYPE: knowledge\n:AREA: %(my/org-pick-area)\n:TOPIC: %(my/org-pick-topic)\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :knowledge:%(my/org-pick-area):\n#+property: DIR attachments\n")
-         :unnarrowed t)
-
-        ("c" "calendar" plain "%?"
-         :target (file+head
-                  "calendar/${title}.org"
-                  ":PROPERTIES:\n:TYPE: calendar\n:AREA: %(my/org-pick-area)\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :calendar:%(my/org-pick-area):\n")
          :unnarrowed t)
 
         ("d" "plain note" plain "%?"
@@ -787,7 +945,7 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
   (interactive)
   (let ((count 0))
     (dolist (file (directory-files-recursively org-roam-directory "\\.org$"))
-      (unless (string-match-p "/archive/" file)
+      (when (org-roam-file-p file)            ; honours the exclusions
         (with-current-buffer (find-file-noselect file)
           (goto-char (point-min))
           (unless (org-id-get)
@@ -826,11 +984,6 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
     (when (treesit-language-available-p lang)
       (add-to-list 'major-mode-remap-alist (cons from to)))))
 
-;; Make ~/.local/bin visible to Emacs (pipx, user tools)
-(let ((local-bin (expand-file-name "~/.local/bin")))
-  (when (file-directory-p local-bin)
-    (add-to-list 'exec-path local-bin)
-    (setenv "PATH" (concat local-bin ":" (getenv "PATH")))))
 
 (use-package magit
   :bind ("C-x g" . magit-status))
@@ -916,7 +1069,7 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 
 ;; Roots shown in the sidebar. Added once, then stored in
 ;; ~/.emacs.d/treemacs-persist across sessions.
-(defvar my/treemacs-roots '("~/org" "~/notes")
+(defvar my/treemacs-roots '("~/org")
   "Directories pinned to the Treemacs workspace.")
 
 (defun my/treemacs-pin-roots ()
