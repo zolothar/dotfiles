@@ -469,8 +469,11 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 
 (setq org-agenda-span 'day
       org-agenda-start-on-weekday nil
-      org-agenda-skip-scheduled-if-done t
-      org-agenda-skip-deadline-if-done t
+      ;; Keep finished tasks in their slots: the day stays a record of
+      ;; what was actually done, not only of what is left
+      org-agenda-skip-scheduled-if-done nil
+      org-agenda-skip-deadline-if-done nil
+      org-agenda-skip-timestamp-if-done nil
       org-agenda-window-setup 'current-window
       org-agenda-restore-windows-after-quit t)
 
@@ -566,6 +569,50 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
         (mapcar (lambda (spec)
                   (cons (car spec) (intern (concat "my-timeblock-" (car spec)))))
                 my/org-area-colors)))
+
+;; org-timeblock skips DONE entries with a hard-coded check and has no
+;; option for it. Hide the done state from that one function, so that
+;; finished tasks stay drawn, as they do in the agenda. Archived
+;; entries are filtered by a separate check and stay hidden.
+(require 'cl-lib)
+
+(defun my/org-timeblock-keep-done (orig &rest args)
+  "Call ORIG with ARGS while every entry counts as not done."
+  (cl-letf (((symbol-function 'org-entry-is-done-p) #'ignore))
+    (apply orig args)))
+
+(with-eval-after-load 'org-timeblock
+  (advice-add 'org-timeblock-get-buffer-entries-all :around
+              #'my/org-timeblock-keep-done))
+
+;; Smaller text in the timeblock view. The package sizes block text from
+;; the frame's default font (font-info of face-font) and wraps it using
+;; default-font-width/-height, none of which see a buffer-local
+;; text-scale. Scale all three together while an org-timeblock buffer is
+;; current, so text shrinks and still wraps to the smaller size.
+(defvar my/org-timeblock-font-scale 0.9
+  "Text size in org-timeblock relative to the default font.")
+
+(defun my/org-timeblock-scale-metric (orig &rest args)
+  "Scale ORIG's pixel result in org-timeblock buffers."
+  (let ((value (apply orig args)))
+    (if (derived-mode-p 'org-timeblock-mode)
+        (max 1 (round (* value my/org-timeblock-font-scale)))
+      value)))
+
+(defun my/org-timeblock-scale-font-info (orig &rest args)
+  "Scale the pixel size reported by ORIG in org-timeblock buffers."
+  (let ((info (apply orig args)))
+    (if (and (vectorp info) (derived-mode-p 'org-timeblock-mode))
+        (let ((copy (copy-sequence info)))
+          (aset copy 2 (max 1 (round (* (aref info 2)
+                                        my/org-timeblock-font-scale))))
+          copy)
+      info)))
+
+(advice-add 'default-font-width  :around #'my/org-timeblock-scale-metric)
+(advice-add 'default-font-height :around #'my/org-timeblock-scale-metric)
+(advice-add 'font-info           :around #'my/org-timeblock-scale-font-info)
 
 ;; --- Queries (the Dataview replacement) -----------
 
