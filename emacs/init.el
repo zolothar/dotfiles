@@ -373,6 +373,27 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 ;; n/p move, u goes up, t cycles TODO, i inserts a heading, ? lists all.
 (setq org-use-speed-commands t)
 
+;; --- Folding state --------------------------------
+;; Remember which headings were folded and unfolded, across Emacs
+;; restarts and file reopenings. The state is written when a file is
+;; saved or killed and restored when it is opened. Files never seen
+;; before open in the default below: every heading, bodies folded.
+(setq org-startup-folded 'content)
+
+(use-package org-visibility
+  :after org
+  :demand t
+  :bind (:map org-visibility-mode-map
+              ;; Save folding even when the text itself is unchanged
+              ("C-x C-v" . org-visibility-force-save))
+  :custom
+  (org-visibility-include-paths (list (file-truename my/org-dir)))
+  (org-visibility-exclude-paths
+   (mapcar (lambda (d) (file-truename (expand-file-name d my/org-dir)))
+           '("archive" "templates")))
+  :config
+  (org-visibility-mode 1))
+
 ;; --------------------------------------------------
 ;; 10. Org capture, agenda and calendar
 ;; --------------------------------------------------
