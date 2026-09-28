@@ -17,7 +17,7 @@
 ;;   13. Org babel
 ;;   14. Org roam
 ;;   15. Programming
-;;   16. Treemacs
+;;   16. Dirvish
 ;;   17. Markdown
 
 ;;; Code:
@@ -182,6 +182,14 @@
               (lambda ()
                 (unless (frame-focus-state)
                   (save-some-buffers t))))
+
+;; Keep buffers in sync with the disk: files changed by other programs
+;; (git, scripts) and directory listings changed from another Dired or
+;; Dirvish buffer, such as a rename done in the side panel.
+(setq global-auto-revert-non-file-buffers t   ; Dired and Dirvish listings too
+      auto-revert-verbose nil                  ; no "Reverting buffer" messages
+      dired-auto-revert-buffer t)              ; refresh a listing on revisit
+(global-auto-revert-mode 1)
 
 ;; --------------------------------------------------
 ;; 7. Completion
@@ -549,6 +557,11 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 (use-package org-timeblock
   :bind ("C-c b" . org-timeblock)
   :config
+  ;; The picture always fits the window height and never scrolls, so the
+  ;; only way to make blocks taller is to show less: fewer days, fewer
+  ;; hours. V changes the number of days live, v cycles the hour range.
+  (setq org-timeblock-span 1                  ; one wide day column
+        org-timeblock-scale-options '(5 . 23)) ; waking hours only
   (setq org-timeblock-tag-colors
         (mapcar (lambda (spec)
                   (cons (car spec) (intern (concat "my-timeblock-" (car spec)))))
@@ -992,7 +1005,6 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
 (use-package diff-hl
   :hook ((prog-mode . diff-hl-mode)
          (org-mode  . diff-hl-mode)
-         (dired-mode . diff-hl-dired-mode)
          (magit-pre-refresh  . diff-hl-magit-pre-refresh)
          (magit-post-refresh . diff-hl-magit-post-refresh))
   :config
@@ -1064,69 +1076,81 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
   (multi-vterm-dedicated-window-height-percent 30))
 
 ;; --------------------------------------------------
-;; 16. Treemacs
+;; 16. Dirvish
 ;; --------------------------------------------------
+;;
+;; Dirvish replaces the look of every Dired buffer but keeps all Dired
+;; keys: C-x d, C-x C-j and anything else that opens Dired now opens
+;; Dirvish. It adds a file preview, a side panel, git state and a set
+;; of transient menus; press ? in any Dirvish buffer for the full list.
 
-;; Roots shown in the sidebar. Added once, then stored in
-;; ~/.emacs.d/treemacs-persist across sessions.
-(defvar my/treemacs-roots '("~/org")
-  "Directories pinned to the Treemacs workspace.")
+;; Dired needs GNU ls for the listing switches below. Linux has it;
+;; on macOS it comes from `brew install coreutils' as gls.
+(when (and (eq system-type 'darwin) (executable-find "gls"))
+  (setq insert-directory-program "gls"))
 
-(defun my/treemacs-pin-roots ()
-  "Add `my/treemacs-roots' to the workspace if not already there."
-  (dolist (dir my/treemacs-roots)
-    (let ((path (expand-file-name dir)))
-      (when (and (file-directory-p path)
-                 (not (treemacs-is-path path :in-workspace)))
-        (treemacs-do-add-project-to-workspace
-         path (file-name-nondirectory (directory-file-name path)))))))
+(setq dired-listing-switches
+      "-l --almost-all --human-readable --group-directories-first --no-group"
+      dired-dwim-target t                 ; copy/move defaults to the other pane
+      delete-by-moving-to-trash t)        ; D sends to the trash, not oblivion
 
-(defun my/treemacs-start ()
-  "Open Treemacs without moving point out of the current window."
-  (let ((win (selected-window)))
-    (treemacs)
-    (my/treemacs-pin-roots)
+(use-package dirvish
+  :init
+  (dirvish-override-dired-mode)
+  :custom
+  ;; Jump targets for `a'. A custom option: setq would not take effect.
+  (dirvish-quick-access-entries
+   '(("h" "~/"                "Home")
+     ("o" "~/org/"            "Org")
+     ("p" "~/org/projects/"   "Projects")
+     ("k" "~/org/knowledge/"  "Knowledge")
+     ("c" "~/org/calendar/"   "Calendar")
+     ("t" "~/org/templates/"  "Templates")
+     ("e" "~/dotfiles/"       "Dotfiles")
+     ("d" "~/Downloads/"      "Downloads")))
+  :config
+  ;; Columns shown next to each file. The order matters for some.
+  (setq dirvish-attributes
+        '(vc-state subtree-state nerd-icons collapse file-time file-size)
+        dirvish-side-attributes
+        '(vc-state subtree-state nerd-icons collapse))
+  (setq dirvish-mode-line-format
+        '(:left (sort symlink) :right (omit yank index)))
+  ;; Huge directories are listed asynchronously with fd. Debian and
+  ;; Ubuntu ship it as fdfind; point dirvish at whichever name exists.
+  ;; Without fd at all, dirvish still works, only big listings are slower.
+  (setq dirvish-large-directory-threshold 20000
+        dirvish-fd-program (if (executable-find "fd") "fd" "fdfind"))
+  ;; Uncomment to make the side panel chase the current file around.
+  ;; Off by default: the panel stays on the directory you opened.
+  ;; (dirvish-side-follow-mode 1)
+  :bind
+  (("C-c f" . dirvish)                    ; full-frame file manager
+   ("C-c e" . dirvish-side)               ; side panel, toggles
+   :map dirvish-mode-map
+   ("?"   . dirvish-dispatch)             ; cheatsheet of everything below
+   ("a"   . dirvish-quick-access)         ; jump to an entry defined above
+   ("f"   . dirvish-file-info-menu)       ; copy path, name, size, ...
+   ("s"   . dirvish-quicksort)            ; sort by name, time, size, ...
+   ("y"   . dirvish-yank-menu)            ; paste/move marked files here
+   ("N"   . dirvish-narrow)               ; filter the listing as you type
+   ("v"   . dirvish-vc-menu)              ; git actions on the file
+   ("TAB" . dirvish-subtree-toggle)       ; expand a directory in place
+   ("^"   . dirvish-history-last)         ; previous directory
+   ("M-b" . dirvish-history-go-backward)
+   ("M-f" . dirvish-history-go-forward)
+   ("M-t" . dirvish-layout-toggle)))      ; preview pane on and off
+
+;; Open the side panel on ~/org at startup without taking focus.
+;; Remove this hook to start with a clean frame instead.
+(defun my/dirvish-side-start ()
+  "Show the Dirvish side panel on ~/org, keep point where it was."
+  (let ((win (selected-window))
+        (default-directory (file-name-as-directory my/org-dir)))
+    (dirvish-side)
     (select-window win)))
 
-(use-package treemacs
-  :bind (("C-x t t" . treemacs)                ; show / hide
-         ("M-0"     . treemacs-select-window)  ; jump to the sidebar
-         ("C-x t f" . treemacs-find-file)      ; locate current file in tree
-         ("C-x t d" . treemacs-select-directory)
-         ("C-x t 1" . treemacs-delete-other-windows))
-  :config
-  (setq treemacs-width                     32
-        treemacs-width-is-initially-locked nil
-        treemacs-is-never-other-window     t
-        treemacs-indentation               2
-        treemacs-collapse-dirs             3
-        treemacs-sorting                   'alphabetic-case-insensitive-asc
-        treemacs-show-hidden-files         t
-        treemacs-silent-refresh            t
-        treemacs-silent-filewatch          t
-        treemacs-file-event-delay          1000
-        treemacs-text-scale                -1
-        treemacs-file-ignore-globs         '("*/__pycache__" "*/.mypy_cache"
-                                             "*/node_modules" "*.pyc")
-        ;; Do not chase the current buffer. The tree stays where it is,
-        ;; the way the Obsidian file pane does.
-        treemacs-follow-after-init         nil)
-
-  (treemacs-filewatch-mode t)                  ; pick up on-disk changes
-  (treemacs-git-mode 'deferred)                ; git status, async
-  (treemacs-indent-guide-mode t)
-  (treemacs-fringe-indicator-mode 'always)
-
-  (add-hook 'emacs-startup-hook #'my/treemacs-start))
-
-;; Icons from nerd-icons
-(use-package treemacs-nerd-icons
-  :after (treemacs nerd-icons)
-  :config (treemacs-load-theme "nerd-icons"))
-
-;; Refresh the tree after magit operations
-(use-package treemacs-magit
-  :after (treemacs magit))
+(add-hook 'emacs-startup-hook #'my/dirvish-side-start)
 
 ;; --------------------------------------------------
 ;; 17. Markdown
