@@ -19,6 +19,7 @@
 ;;   15. Programming
 ;;   16. Dirvish
 ;;   17. Markdown
+;;   18. Workouts
 
 ;;; Code:
 
@@ -1174,6 +1175,7 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
      ("k" "~/org/knowledge/"  "Knowledge")
      ("c" "~/org/calendar/"   "Calendar")
      ("t" "~/org/templates/"  "Templates")
+     ("w" "~/org/projects/workouts/training/" "Training")
      ("e" "~/dotfiles/"       "Dotfiles")
      ("d" "~/Downloads/"      "Downloads")))
   :config
@@ -1226,5 +1228,623 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
 
 (use-package markdown-mode
   :mode ("\\.md\\'" . markdown-mode))
+
+;; --------------------------------------------------
+;; 18. Workouts
+;; --------------------------------------------------
+;;
+;;   projects/workouts/training/training.org          project file: recurring tasks
+;;   projects/workouts/training/journal/YYYY.org      one journal per year: every
+;;                                                    session and measurement, datetree
+;;   projects/workouts/training/programs/<name>-<date>.org  one file per program
+;;   projects/workouts/training/attachments/          photos
+;;
+;; A program is never edited into the next one: a new program is a new
+;; file, and the date at the end of its name is its first day. The
+;; program for a session is the newest one whose date is not after the
+;; session's date.
+;;
+;; Sessions are planned ahead as scheduled TODO entries, filed under
+;; their day in that year's journal. In a program, a strength session
+;; is a heading with a SESSION property and a table with "Exercise" and
+;; "Start" columns; "4 × 8" in Start gives that exercise four set
+;; columns. The "Last" column shows the most recent real result of each
+;; exercise across all journals, whatever program or day it was done
+;; under. Deload entries are skipped there.
+;;
+;; Boxing is one session too: warm-up, solo work, coach. Program
+;; sections under the boxing heading marked :JOURNAL: copy (the solo
+;; work) are copied into each boxing entry, followed by the coach part.
+;;
+;; Every session entry starts with the same items, filled in after the
+;; session: session RPE, pain, injury.
+
+(defvar my/workout-dir
+  (expand-file-name "projects/workouts/training" my/org-dir)
+  "Training project folder.")
+
+(defvar my/workout-journal-dir (expand-file-name "journal" my/workout-dir)
+  "One journal per year, named YYYY.org.")
+
+(defvar my/workout-program-dir (expand-file-name "programs" my/workout-dir)
+  "One Org file per program, named <anything>-YYYY-MM-DD.org.")
+
+(defvar my/workout-measures
+  '(("WEIGHT"    . "Weight, kg")
+    ("ARM_L"     . "Arm L, cm")
+    ("ARM_R"     . "Arm R, cm")
+    ("CHEST"     . "Chest, cm")
+    ("SHOULDERS" . "Shoulders, cm")
+    ("WAIST"     . "Waist, cm")
+    ("HIPS"      . "Hips, cm")
+    ("THIGH_L"   . "Thigh L, cm")
+    ("THIGH_R"   . "Thigh R, cm")
+    ("BODY_FAT"  . "Body fat, pct"))
+  "Measurement properties in prompt order, with their labels.
+Used by the capture template and by `my/workout-measurements'.")
+
+(defconst my/workout--session-items
+  "- Session RPE :: \n- Pain :: \n- Injury :: \n"
+  "Items every session entry starts with, filled in after the session.")
+
+(defvar my/workout--session-day nil
+  "Absolute day of the session being planned, set by `my/workout--target'.")
+
+(defvar my/workout--session-stamp nil
+  "SCHEDULED timestamp of the session being planned.")
+
+;; --- Programs -------------------------------------
+
+(defun my/workout--programs ()
+  "Program files as (START-DAY . FILE), oldest first.
+START-DAY is the absolute day number of the date ending the file name."
+  (when (file-directory-p my/workout-program-dir)
+    (sort (delq nil
+                (mapcar
+                 (lambda (file)
+                   (when (string-match
+                          "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\.org\\'"
+                          file)
+                     (cons (org-time-string-to-absolute (match-string 1 file))
+                           file)))
+                 (directory-files my/workout-program-dir t "\\.org\\'")))
+          (lambda (a b) (< (car a) (car b))))))
+
+(defun my/workout--program (&optional day)
+  "(START-DAY . FILE) of the program in force on DAY (default today)."
+  (let ((day (or day (org-today))))
+    (car (last (seq-filter (lambda (p) (<= (car p) day))
+                           (my/workout--programs))))))
+
+(defun my/workout--week (&optional day)
+  "Week number of DAY (default today) in its program, from 1, or nil."
+  (let ((day (or day (org-today))))
+    (when-let ((p (my/workout--program day)))
+      (1+ (/ (- day (car p)) 7)))))
+
+;; --- Journals -------------------------------------
+
+(defun my/workout--journals ()
+  "Journal files, oldest year first."
+  (when (file-directory-p my/workout-journal-dir)
+    (directory-files my/workout-journal-dir t "\\`[0-9]\\{4\\}\\.org\\'")))
+
+(defun my/workout--journal (year)
+  "Journal file for YEAR, created with its header when missing."
+  (let ((file (expand-file-name (format "%d.org" year) my/workout-journal-dir)))
+    (unless (file-exists-p file)
+      (make-directory my/workout-journal-dir t)
+      (write-region (format (concat "#+title: Training journal %d\n"
+                                    "#+category: workouts\n"
+                                    "#+property: DIR ../attachments\n")
+                            year)
+                    nil file))
+    file))
+
+(defun my/workout--in (file fn)
+  "Call FN in FILE's buffer, widened, point at the start.
+Return FN's value, or nil when FILE is nil or missing."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (funcall fn)))))
+
+(defun my/workout--map-journals (fn match)
+  "Call FN on every journal entry matching MATCH, oldest first.
+Return FN's values as one list."
+  (mapcan (lambda (file)
+            (my/workout--in file (lambda () (org-map-entries fn match 'file))))
+          (my/workout--journals)))
+
+(defun my/workout--goto-day (time)
+  "Go to TIME's day in its year's journal, creating what is missing."
+  (let ((d (decode-time time)))
+    (set-buffer (org-capture-target-buffer (my/workout--journal (nth 5 d))))
+    (widen)
+    (org-datetree-find-date-create (list (nth 4 d) (nth 3 d) (nth 5 d)))))
+
+;; --- Reading entries ------------------------------
+
+(defun my/workout--table-here ()
+  "First table in the subtree at point, as `org-table-to-lisp' returns it."
+  (save-excursion
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (when (re-search-forward "^[ \t]*|" end t)
+        (org-table-to-lisp)))))
+
+(defun my/workout--field (rec key)
+  "Value of column KEY in REC, \"\" when absent."
+  (or (cdr (assoc key rec)) ""))
+
+(defun my/workout--records (table)
+  "Rows of TABLE that name an exercise, as alists keyed by header.
+Tables without an \"Exercise\" column, such as the coach table of
+a boxing entry, give nothing."
+  (let ((rows (seq-filter #'listp table)))
+    (seq-remove (lambda (rec) (string-empty-p (my/workout--field rec "Exercise")))
+                (mapcar (lambda (row) (seq-mapn #'cons (car rows) row))
+                        (cdr rows)))))
+
+(defun my/workout--sets (rec)
+  "Values of REC's set columns, those headed 1, 2, 3…, in order."
+  (mapcar #'cdr (seq-filter (lambda (cell) (string-match-p "\\`[0-9]+\\'" (car cell)))
+                            rec)))
+
+(defun my/workout--done-p (rec)
+  "Non-nil when at least one set of REC is filled in."
+  (seq-some (lambda (s) (not (string-empty-p s))) (my/workout--sets rec)))
+
+(defun my/workout--item (name)
+  "Value of the \"- NAME ::\" item in the entry at point, \"\" when empty."
+  (save-excursion
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (if (re-search-forward
+           (format "^- %s ::[ \t]*\\(.*\\)$" (regexp-quote name)) end t)
+          (string-trim (match-string-no-properties 1))
+        ""))))
+
+(defun my/workout--date ()
+  "Date of the datetree day that the entry at point sits under."
+  (let ((day (or (car (last (org-get-outline-path))) "")))
+    (substring day 0 (min 10 (length day)))))
+
+(defun my/workout--align (text)
+  "TEXT, an Org table, aligned."
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert text)
+    (goto-char (point-min))
+    (org-table-align)
+    (string-trim-right (buffer-string))))
+
+;; --- Results --------------------------------------
+
+(defun my/workout--start-sets (start)
+  "Number of sets in a program Start cell such as \"3 × 7 / leg\"; 3 if none."
+  (if (string-match "\\`[ \t]*\\([0-9]+\\)[ \t]*[×xX]" start)
+      (string-to-number (match-string 1 start))
+    3))
+
+(defun my/workout--exercises (session &optional day)
+  "Exercises of SESSION in the program in force on DAY, as (NAME . SETS)."
+  (my/workout--in
+   (cdr (my/workout--program day))
+   (lambda ()
+     (when-let ((pos (org-find-property "SESSION" session)))
+       (goto-char pos)
+       (mapcar (lambda (rec)
+                 (cons (my/workout--field rec "Exercise")
+                       (my/workout--start-sets (my/workout--field rec "Start"))))
+               (my/workout--records (my/workout--table-here)))))))
+
+(defun my/workout--last-results (&optional stop)
+  "Hash of exercise name to its latest filled-in row, deloads skipped.
+STOP, a (JOURNAL-NAME . POS) pair such as (\"2027.org\" . 1234), keeps
+only entries above POS in that journal and in earlier ones."
+  (let ((results (make-hash-table :test #'equal)))
+    (catch 'done
+      (dolist (file (my/workout--journals))
+        (let ((name (file-name-nondirectory file)))
+          (when (and stop (string< (car stop) name))
+            (throw 'done nil))
+          (my/workout--in
+           file
+           (lambda ()
+             ;; Journals and their datetrees run in date order, so a
+             ;; later row simply overwrites an earlier one
+             (org-map-entries
+              (lambda ()
+                (when (or (null stop)
+                          (not (equal name (car stop)))
+                          (< (point) (cdr stop)))
+                  (dolist (rec (my/workout--records (my/workout--table-here)))
+                    (when (my/workout--done-p rec)
+                      (puthash (my/workout--field rec "Exercise") rec results)))))
+              "SESSION={.}-deload" 'file))))))
+    results))
+
+(defun my/workout--format (rec)
+  "REC as \"7/7/6 @8 +5\": reps, RPE of the last set, extra weight."
+  (let ((reps (seq-remove #'string-empty-p (my/workout--sets rec)))
+        (rpe (my/workout--field rec "RPE"))
+        (kg  (my/workout--field rec "+kg")))
+    (concat (string-join reps "/")
+            (unless (string-empty-p rpe) (concat " @" rpe))
+            (unless (string-empty-p kg) (concat " +" kg)))))
+
+(defun my/workout-refresh-last ()
+  "Recompute the Last column of the session entry at point.
+Only results above this entry, and in earlier journals, count.
+Useful when a session was planned before the previous one was done."
+  (interactive)
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((stop (cons (file-name-nondirectory (buffer-file-name)) (point)))
+           (end (save-excursion (org-end-of-subtree t) (point)))
+           (results (my/workout--last-results stop)))
+      (unless (re-search-forward "^[ \t]*|" end t)
+        (user-error "No table in this entry"))
+      (let* ((header (car (seq-filter #'listp (org-table-to-lisp))))
+             (name-col (seq-position header "Exercise"))
+             (last-col (seq-position header "Last"))
+             (line 2)
+             name)
+        (unless (and name-col last-col)
+          (user-error "Not an exercise table"))
+        (while (setq name (org-table-get line (1+ name-col)))
+          (let ((rec (gethash (string-trim name) results)))
+            (org-table-put line (1+ last-col)
+                           (if rec (my/workout--format rec) "")))
+          (setq line (1+ line)))
+        (org-table-align)))))
+
+;; --- Filling a planned session --------------------
+
+(defun my/workout--target ()
+  "Ask for the session date and go to its day in that year's journal.
+Takes a date, optionally a time or a range: \"fri 18:30-19:45\"."
+  (let (org-time-was-given org-end-time-was-given)
+    (let* ((time (org-read-date t t nil "Session (date, time or range): "))
+           (stamp (format-time-string
+                   (org-time-stamp-format org-time-was-given) time)))
+      (setq my/workout--session-day (time-to-days time)
+            my/workout--session-stamp
+            (if org-end-time-was-given
+                (concat (substring stamp 0 -1) "-" org-end-time-was-given ">")
+              stamp))
+      (my/workout--goto-day time))))
+
+(defun my/workout--measure-target ()
+  "Go to today in this year's journal."
+  (my/workout--goto-day (current-time)))
+
+(defun my/workout-scheduled ()
+  "SCHEDULED timestamp of the session being planned."
+  my/workout--session-stamp)
+
+(defun my/workout-program-name ()
+  "File name of the session's program, without directory and extension."
+  (let ((p (my/workout--program my/workout--session-day)))
+    (if p (file-name-base (cdr p)) "none")))
+
+(defun my/workout-week ()
+  "The session's program week as a string, \"\" without a program."
+  (let ((week (my/workout--week my/workout--session-day)))
+    (if week (number-to-string week) "")))
+
+(defun my/workout-deload-tag ()
+  "\"deload:\" when the session falls in a deload week, else \"\".
+The program sets the cycle with a #+deload_every: N keyword."
+  (let* ((p (my/workout--program my/workout--session-day))
+         (every (my/workout--in
+                 (cdr p)
+                 (lambda ()
+                   (let ((v (cadr (assoc "DELOAD_EVERY"
+                                         (org-collect-keywords
+                                          '("DELOAD_EVERY"))))))
+                     (and v (string-to-number v))))))
+         (week (my/workout--week my/workout--session-day)))
+    (if (and every (> every 0) week (zerop (% week every)))
+        "deload:"
+      "")))
+
+(defun my/workout-table (session)
+  "Org table for SESSION: program exercises, last results alongside.
+There are as many set columns as the largest set count in Start."
+  (let* ((results (my/workout--last-results))
+         (exercises (my/workout--exercises session my/workout--session-day))
+         (sets (apply #'max 1 (mapcar #'cdr exercises)))
+         (blank (apply #'concat (make-list sets " |"))))
+    (my/workout--align
+     (concat "| Exercise |"
+             (mapconcat (lambda (i) (format " %d |" i)) (number-sequence 1 sets) "")
+             " RPE | +kg | Last |\n|-\n"
+             (mapconcat
+              (lambda (ex)
+                (let ((rec (gethash (car ex) results)))
+                  (format "| %s |%s | | %s |\n"
+                          (car ex) blank (if rec (my/workout--format rec) ""))))
+              exercises "")))))
+
+(defun my/workout-coach-table ()
+  "Empty table for what was done in the hour with the coach."
+  (my/workout--align
+   (concat "| Drill | Rounds × time | Notes |\n|-\n"
+           (apply #'concat (make-list 5 "| | | |\n")))))
+
+(defun my/workout-last-remarks ()
+  "Coach remarks from the last boxing entry, for the second session.
+The remarks are the rest of the \"- Coach remarks ::\" line and the
+indented lines under it."
+  (or (seq-some
+       (lambda (file)
+         (my/workout--in
+          file
+          (lambda ()
+            (when-let ((pos (car (last (org-map-entries
+                                        #'point "SESSION=\"boxing\"" 'file)))))
+              (goto-char pos)
+              (let ((end (save-excursion (org-end-of-subtree t) (point))))
+                (if (not (re-search-forward "^[ \t]*- Coach remarks ::" end t))
+                    ""
+                  (let ((start (point)))
+                    (forward-line 1)
+                    (while (and (< (point) end)
+                                (looking-at "[ \t]+\\S-\\|[ \t]*$"))
+                      (forward-line 1))
+                    (string-trim-right
+                     (buffer-substring-no-properties start (point))))))))))
+       (reverse (my/workout--journals)))
+      ""))
+
+;; --- Boxing ---------------------------------------
+
+(defun my/workout--copy-section (text level)
+  "Program subtree TEXT from LEVEL, reshaped as a child of a session entry.
+The JOURNAL property goes; headings shift so TEXT's top one is level 2,
+which capture then places one level below the entry."
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert text)
+    (goto-char (point-min))
+    (org-entry-delete (point) "JOURNAL")
+    (goto-char (point-min))
+    (let ((shift (- 2 level)))
+      (while (re-search-forward "^\\(\\*+\\) " nil t)
+        (replace-match (make-string (max 1 (+ (length (match-string 1)) shift)) ?*)
+                       t t nil 1)))
+    (string-trim (buffer-string))))
+
+(defun my/workout--program-sections (session)
+  "Sections of SESSION marked :JOURNAL: copy in the session's program.
+One string, ready to go under the session entry; nil when none.
+Mark only top sections: a marked heading inside a marked one is
+copied twice."
+  (let ((parts
+         (my/workout--in
+          (cdr (my/workout--program my/workout--session-day))
+          (lambda ()
+            (when-let ((pos (org-find-property "SESSION" session)))
+              (goto-char pos)
+              (org-map-entries
+               (lambda ()
+                 (cons (org-current-level)
+                       (buffer-substring-no-properties
+                        (point)
+                        (save-excursion (org-end-of-subtree t) (point)))))
+               "JOURNAL=\"copy\"" 'tree))))))
+    (when parts
+      (mapconcat (lambda (part) (my/workout--copy-section (cdr part) (car part)))
+                 parts "\n"))))
+
+(defun my/workout-boxing-body ()
+  "Body of a boxing entry: the program's solo work, then the coach part."
+  (string-join
+   (delq nil
+         (list (my/workout--program-sections "boxing")
+               (concat "** Coach\n\n"
+                       "- Focus :: \n"
+                       "- Question for the coach :: \n\n"
+                       (my/workout-coach-table) "\n\n"
+                       "- Coach remarks ::\n  - ")))
+   "\n"))
+
+;; --- Views ----------------------------------------
+
+(defun my/workout--show (buffer title header rows)
+  "Pop up BUFFER with TITLE and an Org table of HEADER and ROWS.
+A row given as the symbol `hline' becomes a horizontal rule."
+  (with-current-buffer (get-buffer-create buffer)
+    (erase-buffer)
+    (delay-mode-hooks (org-mode))
+    (insert "#+title: " title "\n\n")
+    (let ((start (point)))
+      (insert "| " (string-join header " | ") " |\n|-\n")
+      (dolist (row rows)
+        (insert (if (eq row 'hline)
+                    "|-\n"
+                  (concat "| " (string-join row " | ") " |\n"))))
+      (goto-char start)
+      (org-table-align))
+    (goto-char (point-min))
+    (pop-to-buffer (current-buffer))))
+
+(defun my/workout--logged-exercises ()
+  "Every exercise name that appears in a journal session table."
+  (delete-dups
+   (apply #'append
+          (my/workout--map-journals
+           (lambda ()
+             (mapcar (lambda (rec) (my/workout--field rec "Exercise"))
+                     (my/workout--records (my/workout--table-here))))
+           "SESSION={.}"))))
+
+(defun my/workout-history (exercise)
+  "Show every logged result of EXERCISE, oldest first.
+A horizontal rule separates results done under different programs."
+  (interactive
+   (list (completing-read "Exercise: " (my/workout--logged-exercises) nil t)))
+  (let* ((found
+          (delq nil
+                (my/workout--map-journals
+                 (lambda ()
+                   (let ((rec (seq-find
+                               (lambda (r) (equal (my/workout--field r "Exercise") exercise))
+                               (my/workout--records (my/workout--table-here)))))
+                     (when (and rec (my/workout--done-p rec))
+                       (list (org-entry-get nil "PROGRAM")
+                             (concat (my/workout--date)
+                                     (if (member "deload" (org-get-tags nil t))
+                                         " deload" ""))
+                             (or (org-entry-get nil "WEEK") "")
+                             (my/workout--sets rec)
+                             (my/workout--field rec "RPE")
+                             (my/workout--field rec "+kg")))))
+                 "SESSION={.}")))
+         (sets (apply #'max 1 (mapcar (lambda (f) (length (nth 3 f))) found)))
+         (rows '())
+         (program nil))
+    (dolist (f found)
+      (when (and program (not (equal program (nth 0 f))))
+        (push 'hline rows))
+      (setq program (nth 0 f))
+      (push (append (list (nth 1 f) (nth 2 f))
+                    (nth 3 f)
+                    (make-list (- sets (length (nth 3 f))) "")
+                    (list (nth 4 f) (nth 5 f)))
+            rows))
+    (my/workout--show "*workout-history*" exercise
+                      (append '("Date" "Week")
+                              (mapcar #'number-to-string (number-sequence 1 sets))
+                              '("RPE" "+kg"))
+                      (nreverse rows))))
+
+(defun my/workout-sessions ()
+  "Show every done session: date, type, week, session RPE, pain, injury."
+  (interactive)
+  (my/workout--show
+   "*workout-sessions*" "Sessions"
+   '("Date" "Session" "Week" "RPE" "Pain" "Injury")
+   (my/workout--map-journals
+    (lambda ()
+      (list (my/workout--date)
+            (org-get-heading t t t t)
+            (or (org-entry-get nil "WEEK") "")
+            (my/workout--item "Session RPE")
+            (my/workout--item "Pain")
+            (my/workout--item "Injury")))
+    "SESSION={.}/DONE")))
+
+(defun my/workout-measurements ()
+  "Show every measurement entry as one table, oldest first."
+  (interactive)
+  (my/workout--show
+   "*workout-measurements*" "Measurements"
+   (append '("Date") (mapcar #'cdr my/workout-measures) '("Photo"))
+   (my/workout--map-journals
+    (lambda ()
+      (append (list (my/workout--date))
+              (mapcar (lambda (m) (or (org-entry-get nil (car m)) ""))
+                      my/workout-measures)
+              (list (if (member "ATTACH" (org-get-tags nil t)) "yes" ""))))
+    "measure")))
+
+;; --- Capture --------------------------------------
+;; C-c c w opens the workout group. A session is a TODO scheduled on
+;; the date you give, filed under that day in that year's journal; fill
+;; it in after the session, mark it DONE. Measurements are recorded as
+;; they happen and opened at once, ready for a photo.
+
+(defun my/workout--entry (key title session body &optional deload)
+  "Capture template KEY planning a SESSION entry titled TITLE with BODY.
+The entry starts with the session items; BODY follows them directly.
+With DELOAD, the entry is tagged deload in a program's deload week."
+  `(,key ,title entry (function my/workout--target)
+         ,(concat "* TODO " title " :workouts:"
+                  (if deload "%(my/workout-deload-tag)" "") "\n"
+                  "SCHEDULED: %(my/workout-scheduled)\n"
+                  ":PROPERTIES:\n"
+                  ":SESSION: " session "\n"
+                  ":PROGRAM: %(my/workout-program-name)\n"
+                  ":WEEK: %(my/workout-week)\n"
+                  ":END:\n\n"
+                  my/workout--session-items
+                  body)
+         :immediate-finish t))
+
+(defun my/workout--measure-template ()
+  "Capture template text for a measurement entry."
+  (concat "* Measurements :measure:\n:PROPERTIES:\n"
+          (mapconcat (lambda (m) (format ":%s: %%^{%s}\n" (car m) (cdr m)))
+                     my/workout-measures "")
+          ":END:\n\n%U"))
+
+(setq org-capture-templates
+      (append
+       ;; Drop earlier copies, so re-evaluating this section is harmless
+       (seq-remove (lambda (tpl) (string-prefix-p "w" (car tpl)))
+                   org-capture-templates)
+       (list
+        '("w" "Workout")
+        (my/workout--entry "w1" "Strength 1" "strength-1"
+                           "\n%(my/workout-table \"strength-1\")" t)
+        (my/workout--entry "w2" "Strength 2" "strength-2"
+                           "\n%(my/workout-table \"strength-2\")" t)
+        (my/workout--entry "wb" "Boxing" "boxing"
+                           "%(my/workout-boxing-body)")
+        (my/workout--entry "ws" "Second session" "second"
+                           (concat "- Theme, coach remarks ::"
+                                   "%(my/workout-last-remarks)\n"
+                                   "- Notes :: "))
+        `("wm" "Measurements" entry
+          (function my/workout--measure-target)
+          ,(my/workout--measure-template)
+          :immediate-finish t :jump-to-captured t))))
+
+;; --- Commands and keys ----------------------------
+
+(defun my/workout-journal (&optional pick)
+  "Open this year's journal. With PICK (C-u), choose any year."
+  (interactive "P")
+  (find-file
+   (if pick
+       (read-file-name "Journal: " (file-name-as-directory my/workout-journal-dir)
+                       nil t)
+     (my/workout--journal (nth 5 (decode-time))))))
+
+(defun my/workout-program (&optional pick)
+  "Open the program in force today. With PICK (C-u), choose any."
+  (interactive "P")
+  (let ((active (cdr (my/workout--program))))
+    (cond (pick (find-file (read-file-name
+                            "Program: "
+                            (file-name-as-directory my/workout-program-dir)
+                            nil t)))
+          (active (find-file active))
+          (t (user-error "No program starting today or earlier in %s"
+                         my/workout-program-dir)))))
+
+(defun my/workout-new-program (start)
+  "Copy the newest program into a new file starting on START, open it."
+  (interactive (list (org-read-date nil nil nil "First day (a Monday): ")))
+  (let ((newest (cdr (car (last (my/workout--programs)))))
+        (file (expand-file-name (format "program-%s.org" start)
+                                my/workout-program-dir)))
+    (make-directory my/workout-program-dir t)
+    (when (file-exists-p file)
+      (user-error "%s already exists" (file-name-nondirectory file)))
+    (if newest
+        (copy-file newest file)
+      (write-region "#+title: Training program\n#+deload_every: 5\n" nil file))
+    (find-file file)))
+
+(global-set-key (kbd "C-c w l") #'my/workout-journal)
+(global-set-key (kbd "C-c w p") #'my/workout-program)
+(global-set-key (kbd "C-c w n") #'my/workout-new-program)
+(global-set-key (kbd "C-c w h") #'my/workout-history)
+(global-set-key (kbd "C-c w s") #'my/workout-sessions)
+(global-set-key (kbd "C-c w m") #'my/workout-measurements)
+(global-set-key (kbd "C-c w r") #'my/workout-refresh-last)
 
 ;;; init.el ends here
