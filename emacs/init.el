@@ -20,6 +20,7 @@
 ;;   16. Dirvish
 ;;   17. Markdown
 ;;   18. Workouts
+;;   19. Shift log
 
 ;;; Code:
 
@@ -287,6 +288,158 @@ colour in `my/org-area-colors' (section 10).")
   '("project" "knowledge" "calendar")
   "Document types.")
 
+;; --- Knowledge vocabulary -------------------------
+;; A knowledge note is described by properties in its file drawer:
+;;   TYPE    knowledge
+;;   DOMAIN  what it is about, one value from `my/org-knowledge-domains'
+;;   TOPICS  specifics inside the domain, free, space-separated:
+;;           "sql postgres", "s7-400 profibus", "footwork"
+;;   KIND    its form, one value from `my/org-knowledge-kinds'
+;; DOMAIN is not AREA: AREA says where time goes, DOMAIN what a note
+;; is about. Both lists show their hints in the minibuffer while
+;; picking; edit the hints freely, they are only for reading.
+
+(defvar my/org-knowledge-kinds
+  '(("concept"         "Понятия"
+     "что это и почему так устроено; перечитываю, чтобы понять")
+    ("howto"           "Инструкции"
+     "шаги к конкретному результату; выполняю по порядку")
+    ("reference"       "Справочник"
+     "синтаксис, таблицы, флаги; ищу глазами нужную строку")
+    ("troubleshooting" "Разбор проблем"
+     "симптом, причина, решение; что сломалось и как чинил")
+    ("source"          "Источники"
+     "конспект одной книги, курса, статьи, видео")
+    ("hub"             "Хабы"
+     "входная точка в область: пара абзацев и список ссылок"))
+  "Knowledge note forms as (NAME LABEL HINT), in display order.
+LABEL heads a group in a hub's index.")
+
+(defvar my/org-knowledge-domains
+  '(("it" "IT: разработка"
+     ("python"         "Python"
+      "язык: синтаксис, стандартная библиотека, идиомы, пакеты, venv")
+     ("shell"          "Shell"
+      "bash, скрипты, конвейеры, CLI-утилиты: grep, sed, awk, find")
+     ("cs"             "Основы CS"
+      "алгоритмы, структуры данных, сложность, конкурентность")
+     ("db"             "Базы данных"
+      "модель данных, SQL, ключи, индексы, транзакции, СУБД, NoSQL")
+     ("backend"        "Backend"
+      "HTTP API, REST, фреймворки, аутентификация, кеш, очереди")
+     ("architecture"   "Архитектура"
+      "системный дизайн, распределённые системы, масштабирование")
+     ("testing"        "Тестирование"
+      "pytest, фикстуры, моки, интеграционные тесты, TDD")
+     ("devtools"       "Инструменты разработки"
+      "git, отладка, профилирование, линтеры, форматтеры")
+     ("emacs"          "Emacs"
+      "конфиг, пакеты, Org, org-roam, elisp"))
+    ("infra" "IT: инфраструктура"
+     ("linux"          "Linux"
+      "процессы, файлы, права, пользователи, systemd, пакеты, загрузка")
+     ("net"            "Сети"
+      "TCP/IP, DNS, HTTP, TLS, маршрутизация, VLAN, файрвол")
+     ("security"       "Безопасность"
+      "криптография, доступ, харденинг, уязвимости, ИБ АСУ ТП, IEC 62443")
+     ("virtualization" "Виртуализация"
+      "гипервизоры, VM, Proxmox, VMware, снапшоты")
+     ("containers"     "Контейнеры"
+      "Docker, образы, compose, тома, реестры")
+     ("k8s"            "Kubernetes"
+      "оркестрация: поды, сервисы, деплойменты, Helm")
+     ("cicd"           "CI/CD"
+      "пайплайны, сборка, выкладка, GitLab CI, GitHub Actions")
+     ("iac"            "Инфраструктура как код"
+      "Ansible, Terraform, управление конфигурацией")
+     ("cloud"          "Облака"
+      "AWS, Azure, Yandex Cloud: сервисы, сети, IAM")
+     ("observability"  "Наблюдаемость"
+      "логи, метрики, трейсинг, алерты, Prometheus, Grafana"))
+    ("automation" "Автоматизация"
+     ("plc"            "ПЛК: аппаратура"
+      "CPU, модули, ET 200, конфигурация железа, резервирование, диагностика")
+     ("plcprog"        "ПЛК: программирование"
+      "IEC 61131-3: LAD, FBD, SCL, STL; OB, FB, DB; STEP 7, TIA Portal")
+     ("dcs"            "РСУ / PCS 7"
+      "мультипроект, CFC, SFC, APL, AS/OS, серверы и клиенты")
+     ("scada"          "SCADA / HMI"
+      "WinCC, мнемосхемы, тревоги, архивы, отчёты, пользователи")
+     ("fieldbus"       "Промышленные сети"
+      "Profibus, Profinet, Modbus, OPC UA, шлюзы, диагностика обмена")
+     ("control"        "Теория управления"
+      "ПИД, настройка контуров, каскадное и прочее регулирование")
+     ("instruments"    "КИПиА"
+      "датчики, 4–20 мА, HART, клапаны, позиционеры, калибровка")
+     ("drives"         "Электропривод"
+      "ЧРП, двигатели, пускатели, защиты привода")
+     ("electrical"     "Электрика"
+      "схемы, питание 24 В, защита, заземление, шкафы")
+     ("sis"            "Функциональная безопасность"
+      "ПАЗ, SIL, F-системы, блокировки")
+     ("process"        "Технология объекта"
+      "как устроен сам процесс: оборудование, режимы, электрофильтры")
+     ("commissioning"  "Пусконаладка"
+      "ПНР, FAT/SAT, испытания, ввод в эксплуатацию")
+     ("standards"      "Нормы и документация"
+      "ГОСТ, МЭК, P&ID, схемы, проектная документация"))
+    ("sport" "Спорт"
+     ("boxing"         "Бокс"
+      "техника, тактика, комбинации, спарринг")
+     ("strength"       "Силовая"
+      "упражнения, программы, прогрессия нагрузки")
+     ("conditioning"   "ОФП и выносливость"
+      "кардио, интервалы, функциональная подготовка")
+     ("mobility"       "Мобильность"
+      "разминка, растяжка, подвижность суставов")
+     ("recovery"       "Восстановление"
+      "сон, отдых, травмы и их профилактика")
+     ("nutrition"      "Питание"
+      "рацион, белок, вес, режим"))
+    ("life" "Быт"
+     ("health"         "Здоровье"
+      "врачи, обследования, профилактика")
+     ("finance"        "Финансы"
+      "бюджет, налоги, вклады, инвестиции")
+     ("home"           "Дом"
+      "ремонт, техника, обслуживание")
+     ("cooking"        "Кухня"
+      "рецепты, техники готовки")
+     ("admin"          "Документы"
+      "бюрократия, договоры, госуслуги")
+     ("travel"         "Поездки"
+      "маршруты, транспорт, сборы"))
+    ("mind" "Мышление и обучение"
+     ("pkm"            "PKM"
+      "ведение заметок, базы знаний, продуктивность")
+     ("learning"       "Обучение"
+      "как учиться, запоминать, планировать учёбу")
+     ("languages"      "Языки"
+      "иностранные языки: грамматика, лексика"))
+    ("culture" "Культура"
+     ("books"          "Книги"
+      "художественная и нон-фикшн литература")
+     ("screen"         "Кино и сериалы"
+      "фильмы, сериалы")
+     ("games"          "Игры"
+      "видеоигры и настольные")))
+  "Knowledge domains, grouped: (GROUP LABEL (NAME LABEL HINT)...).
+NAME goes into DOMAIN and must be unique across all groups. LABEL of
+a domain titles its hub; LABEL of a group heads it in the minibuffer
+and titles the group hub.")
+
+(defun my/org-knowledge--domain (name)
+  "(GROUP NAME LABEL HINT) for domain NAME, nil when it is unknown."
+  (seq-some (lambda (group)
+              (when-let ((domain (assoc name (cddr group))))
+                (cons (car group) domain)))
+            my/org-knowledge-domains))
+
+(defun my/org-knowledge--domain-names ()
+  "Every domain name, in the order of `my/org-knowledge-domains'."
+  (mapcan (lambda (group) (mapcar #'car (cddr group)))
+          my/org-knowledge-domains))
+
 ;; Type to its subdirectory. Plural for projects, singular elsewhere.
 (defvar my/org-type-dirs
   '(("project"   . "projects")
@@ -294,13 +447,14 @@ colour in `my/org-area-colors' (section 10).")
     ("calendar"  . "calendar"))
   "Map a document type to its subdirectory under `my/org-dir'.")
 
-;; These are split one level further, by area.
-;; Below that:
-;;   projects/<area>/<name>/<name>.org   + <name>/attachments/
-;;   knowledge/<area>/<topic>/<name>.org + <topic>/attachments/
-;; so a project owns its folder, while knowledge notes share one
-;; attachments folder per topic (coding/python, work/pcs7, ...).
-(defvar my/org-area-split-dirs '("projects" "knowledge")
+;; Projects are split one level further, by area:
+;;   projects/<area>/<name>/<name>.org + <name>/attachments/
+;; Knowledge is flat and classified by tags, not folders:
+;;   knowledge/<name>.org              + attachments/<name>/
+;; Areas say where time goes; a knowledge note is about a subject,
+;; which often spans several areas. Hub notes (KIND hub) give the
+;; structure that folders used to give.
+(defvar my/org-area-split-dirs '("projects")
   "Type directories that get an area subdirectory.")
 
 (defvar my/org-dir (expand-file-name "~/org")
@@ -314,12 +468,11 @@ colour in `my/org-area-colors' (section 10).")
   (dolist (area my/org-areas)
     (make-directory (expand-file-name (concat dir "/" area) my/org-dir) t)))
 
-;; --- Area and topic prompts -----------------------
+;; --- Area prompt ----------------------------------
 ;; Shared by org-capture (section 10) and org-roam (section 14).
 ;; Ask once per capture and reuse the answer everywhere in a template:
 ;; in the path, the property, the category and the tag.
 (defvar my/org-area-choice nil)
-(defvar my/org-topic-choice nil)
 
 (defun my/org-pick-area ()
   "Return the area for the capture in progress, asking once."
@@ -327,26 +480,8 @@ colour in `my/org-area-colors' (section 10).")
       (setq my/org-area-choice
             (completing-read "Area: " my/org-areas nil t))))
 
-(defun my/org-pick-topic ()
-  "Return the knowledge topic, asking once.
-Completes over topics that already exist for the chosen area, but any
-new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
-  (or my/org-topic-choice
-      (setq my/org-topic-choice
-            (let* ((dir (expand-file-name
-                         (concat "knowledge/" (my/org-pick-area)) my/org-dir))
-                   (existing
-                    (when (file-directory-p dir)
-                      (seq-remove
-                       (lambda (d) (string= d "attachments"))
-                       (seq-filter
-                        (lambda (d) (file-directory-p (expand-file-name d dir)))
-                        (directory-files dir nil "\\`[^.]"))))))
-              (completing-read "Topic: " existing nil nil)))))
-
 (add-hook 'org-capture-after-finalize-hook
-          (lambda () (setq my/org-area-choice nil
-                           my/org-topic-choice nil)))
+          (lambda () (setq my/org-area-choice nil)))
 
 ;; --- Tags and properties --------------------------
 
@@ -368,7 +503,9 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 (setq org-global-properties
       `(("TYPE_ALL"   . ,(mapconcat #'identity my/org-types " "))
         ("AREA_ALL"   . ,(mapconcat #'identity my/org-areas " "))
-        ("STATUS_ALL" . "idea active paused done archived")))
+        ("STATUS_ALL" . "idea active paused done archived")
+        ("DOMAIN_ALL" . ,(string-join (my/org-knowledge--domain-names) " "))
+        ("KIND_ALL"   . ,(mapconcat #'car my/org-knowledge-kinds " "))))
 
 ;; Speed commands: on a heading, single letters act as commands.
 ;; n/p move, u goes up, t cycles TODO, i inserts a heading, ? lists all.
@@ -399,18 +536,104 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 ;; 10. Org capture, agenda and calendar
 ;; --------------------------------------------------
 
+;; --- Daily note paths -----------------------------
+;; One file per day: calendar/<YYYY>/<MM>/<YYYY-MM-DD>.org. Anything
+;; else under calendar/, such as events.org, is an ordinary calendar
+;; file and is always in the agenda.
+
+(defvar my/org-calendar-dir (expand-file-name "calendar" my/org-dir)
+  "Daily notes and other calendar files.")
+
+(defvar my/org-template-dir (expand-file-name "templates" my/org-dir)
+  "Day templates and, under checklists/, checklist templates.
+Not scanned by the agenda, excluded from org-roam.")
+
+(defconst my/org-day-file-regexp
+  "\\`\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\.org\\'"
+  "File name of a daily note; group 1 is its date.")
+
+(defun my/org-date+ (time n)
+  "Return TIME shifted by N days. Uses decoded time, so DST-safe."
+  (let ((d (decode-time time)))
+    (setf (decoded-time-day d) (+ (decoded-time-day d) n))
+    (encode-time d)))
+
+(defun my/org-monday-of (time)
+  "Return the Monday of the week containing TIME."
+  (let ((dow (decoded-time-weekday (decode-time time))))
+    (my/org-date+ time (- (mod (- dow 1) 7)))))
+
+(defun my/org-day--stamp (date)
+  "DATE as \"2026-10-05 Mon\", in English whatever the locale."
+  (let ((system-time-locale "C"))
+    (format-time-string "%Y-%m-%d %a" date)))
+
+(defun my/org-day-file (date)
+  "Daily note file for DATE."
+  (expand-file-name (format-time-string "%Y/%m/%Y-%m-%d.org" date)
+                    my/org-calendar-dir))
+
+(defun my/org-day--date-of (file)
+  "Date of daily note FILE as YYYY-MM-DD; nil for any other file."
+  (let ((name (file-name-nondirectory file)))
+    (when (string-match my/org-day-file-regexp name)
+      (match-string 1 name))))
+
+(defun my/org-day--files ()
+  "Every daily note, oldest first."
+  (sort (seq-filter #'my/org-day--date-of
+                    (directory-files-recursively my/org-calendar-dir "\\.org\\'"))
+        (lambda (a b)
+          (string< (my/org-day--date-of a) (my/org-day--date-of b)))))
+
 ;; --- Which files the agenda scans -----------------
-;; Only tasks and calendar blocks. Knowledge files hold no scheduled
-;; items, so scanning them would only slow the agenda down.
-;; org-roam still indexes everything (section 14).
+;; Projects, calendar files and daily notes. A daily note older than
+;; `my/org-day-agenda-days' drops out, unless it still holds an open
+;; task: a task captured into a day is never lost, and the agenda does
+;; not slow down as the years of notes pile up. Knowledge files hold
+;; no scheduled items and are not scanned; org-roam still indexes
+;; everything (section 14).
+
+(defvar my/org-agenda-exclude-regexp "/shift-log/reports/"
+  "Files under projects/ the agenda skips: copies of entries kept elsewhere.")
+
+(defvar my/org-day-agenda-days 60
+  "Daily notes this many days old or newer are always in the agenda.")
+
+(defun my/org--open-todo-regexp ()
+  "Regexp matching a heading with a not-done TODO keyword.
+Called at startup too, before Org is loaded and before the keywords
+are set further down (TODO states): Org's default stands in then."
+  (let* ((seq (cdar (or (bound-and-true-p org-todo-keywords)
+                        '((sequence "TODO" "DONE")))))
+         (open (if (member "|" seq)
+                   (seq-take-while (lambda (k) (not (equal k "|"))) seq)
+                 (butlast seq))))
+    (concat "^\\*+ "
+            (regexp-opt (mapcar (lambda (k) (replace-regexp-in-string "(.*" "" k))
+                                open)
+                        t)
+            "\\b")))
 
 (defun my/org-agenda-files ()
   "Rebuild the agenda file list from disk."
-  (append (list (expand-file-name "inbox.org" my/org-dir))
-          (directory-files-recursively
-           (expand-file-name "projects" my/org-dir) "\\.org$")
-          (directory-files-recursively
-           (expand-file-name "calendar" my/org-dir) "\\.org$")))
+  (let ((since (format-time-string
+                "%Y-%m-%d"
+                (my/org-date+ (current-time) (- my/org-day-agenda-days))))
+        (open (my/org--open-todo-regexp)))
+    (append
+     (seq-remove (lambda (file) (string-match-p my/org-agenda-exclude-regexp file))
+                 (directory-files-recursively
+                  (expand-file-name "projects" my/org-dir) "\\.org\\'"))
+     (seq-remove #'my/org-day--date-of
+                 (directory-files-recursively my/org-calendar-dir "\\.org\\'"))
+     (seq-filter (lambda (file)
+                   (or (not (string< (my/org-day--date-of file) since))
+                       (with-temp-buffer
+                         (insert-file-contents file)
+                         (let ((case-fold-search nil))
+                           (re-search-forward open nil t)))))
+                 (my/org-day--files)))))
 
 (setq org-agenda-files (my/org-agenda-files))
 
@@ -421,28 +644,31 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
   (message "Agenda files: %d" (length org-agenda-files)))
 
 ;; --- Capture --------------------------------------
-
-(setq org-default-notes-file (expand-file-name "inbox.org" my/org-dir))
-
-;; %a inserts a link back to wherever capture was invoked from.
+;; Everything quick lands in today's daily note, under Notes. Refile
+;; tasks to their projects with C-c C-w; the ones left in daily notes
+;; are listed by C-c a i and stay in the agenda until done.
 ;; %(my/org-pick-area) asks for the area once and reuses the answer.
+
 (setq org-capture-templates
-      '(("t" "Task to inbox" entry
-         (file "~/org/inbox.org")
-         "* TODO %?\n  %U\n  %a" :empty-lines 1)
+      '(("t" "Task" entry
+         (function my/org-day-goto-notes)
+         "* TODO %?\n%a")
 
         ("s" "Scheduled task" entry
-         (file "~/org/inbox.org")
-         "* TODO %? :%(my/org-pick-area):\n  SCHEDULED: %^{When}T\n  %U"
-         :empty-lines 1)
+         (function my/org-day-goto-notes)
+         "* TODO %? :%(my/org-pick-area):\nSCHEDULED: %^{When}T")
 
-        ("n" "Note to inbox" entry
-         (file "~/org/inbox.org")
-         "* %?\n  %U" :empty-lines 1)
+        ("n" "Note" entry
+         (function my/org-day-goto-notes)
+         "* %<%H:%M> %?")
 
         ("l" "Link with note" entry
-         (file "~/org/inbox.org")
-         "* %?\n  %U\n  %i\n  %a" :empty-lines 1)
+         (function my/org-day-goto-notes)
+         "* %<%H:%M> %?\n%i\n%a")
+
+        ("k" "Checklist" entry
+         (function my/org-day-goto-notes)
+         "* %(my/checklist-capture)")
 
         ("j" "Journal" entry
          (file+olp+datetree "~/org/journal.org")
@@ -506,7 +732,7 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
   :config
   ;; Everything with a time of day lands in the first group and is laid
   ;; out on the time grid. The area groups below hold only untimed
-  ;; items: tasks without an hour, deadlines, inbox.
+  ;; items: tasks without an hour, deadlines, tasks in daily notes.
   (setq org-super-agenda-groups
         '((:name "Schedule"   :time-grid t         :order 1)
           (:name "Overdue"    :deadline past       :order 2)
@@ -520,7 +746,7 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
           (:name "Social"     :category "social"   :order 16)
           (:name "Road"       :category "road"     :order 20)
           (:name "Routine"    :category "routine"  :order 21)
-          (:name "Inbox"      :file-path "inbox"   :order 30)))
+          (:name "Daily notes" :file-path "/calendar/" :order 30)))
   (org-super-agenda-mode))
 
 ;; --- Custom views ---------------------------------
@@ -545,9 +771,10 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
                      ((org-agenda-overriding-header "Coding"))))
          ((org-agenda-category-filter-preset '("+coding"))))
 
-        ("i" "Inbox to process" tags-todo "*"
-         ((org-agenda-files (list (expand-file-name "inbox.org" my/org-dir)))
-          (org-agenda-overriding-header "Inbox")))
+        ("i" "Tasks in daily notes" alltodo ""
+         ((org-agenda-files (seq-filter #'my/org-day--date-of
+                                        (my/org-agenda-files)))
+          (org-agenda-overriding-header "Tasks in daily notes, to refile")))
 
         ("P" "Active projects" tags "project+STATUS=\"active\""
          ((org-agenda-overriding-header "Active projects")))
@@ -643,8 +870,8 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 
 ;; --- Rescan agenda files --------------------------
 ;; The file list is built at startup. Rebuild it whenever something
-;; reads it, so new projects and generated weeks appear without a
-;; restart: the agenda, org-timeblock and the week generator.
+;; reads it, so new projects and daily notes appear without a
+;; restart: the agenda and org-timeblock.
 (defun my/org-agenda-files-refresh (&rest _)
   "Rebuild `org-agenda-files' from disk."
   (setq org-agenda-files (my/org-agenda-files)))
@@ -653,20 +880,248 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
 (with-eval-after-load 'org-timeblock
   (advice-add 'org-timeblock :before #'my/org-agenda-files-refresh))
 
-;; --- Week generation from day templates -----------
+;; --- Checklists -----------------------------------
 ;;
-;;   templates/<day>-template.org  one file per day, any fixed date inside
-;;   my/org-week-plan              which template falls on which weekday
-;;   calendar/<YYYY>-W<NN>.org     generated week, edited freely afterwards
+;;   templates/checklists/<name>.org   one checklist template per file
+;;
+;; A template is a #+title and "- [ ]" items, nested if you like.
+;; Headings in it are allowed: they are shifted to wherever the list
+;; lands. A new file is a new checklist; C-c K opens one by name and
+;; starts a new one when the name is unknown. A list is put to use:
+;;   C-c c k              into today's daily note, under Notes
+;;   C-c k                as the last child of the heading at point,
+;;                        in any Org file; with C-u, the bare items
+;;                        at point, e.g. inside a block
+;;   #+checklist: NAME    in a block of a day template, filled in
+;;                        when the day is generated
+;; The first two give a heading "Title [0/N] :checklist:". Each use
+;; is a copy: editing a template changes lists inserted afterwards,
+;; never earlier ones, so a ticked list stays a record of that day.
+
+(defvar my/checklist-dir (expand-file-name "checklists" my/org-template-dir)
+  "Checklist templates, one per file, named <name>.org.")
+
+(make-directory my/checklist-dir t)
+
+(defun my/checklist-names ()
+  "Every checklist template name."
+  (mapcar #'file-name-base (directory-files my/checklist-dir nil "\\.org\\'")))
+
+(defun my/checklist--file (name)
+  "File of checklist template NAME."
+  (expand-file-name (concat name ".org") my/checklist-dir))
+
+(defun my/checklist--read (name)
+  "(TITLE . ITEMS) of checklist NAME, nil when there is no such file.
+ITEMS is everything after the #+keywords at the top, trimmed."
+  (let ((file (my/checklist--file name)))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (let ((title (when (re-search-forward "^#\\+title:[ \t]*\\(.+\\)$" nil t)
+                       (string-trim (match-string 1)))))
+          (goto-char (point-min))
+          (while (and (not (eobp)) (looking-at-p "^\\(#\\+\\|[ \t]*$\\)"))
+            (forward-line 1))
+          (cons (or title name)
+                (string-trim (buffer-substring-no-properties
+                              (point) (point-max)))))))))
+
+(defun my/checklist--shift (text level)
+  "TEXT with its headings shifted so that the highest is at LEVEL."
+  (let ((levels '())
+        (start 0))
+    (while (string-match "^\\(\\*+\\) " text start)
+      (push (length (match-string 1 text)) levels)
+      (setq start (match-end 0)))
+    (if (null levels)
+        text
+      (let ((shift (- level (apply #'min levels))))
+        (replace-regexp-in-string
+         "^\\(\\*+\\) "
+         (lambda (m)
+           (concat (make-string (max 1 (+ (length (match-string 1 m)) shift)) ?*)
+                   " "))
+         text t t)))))
+
+(defun my/checklist-items (name level)
+  "Items of checklist NAME to go under a heading at LEVEL, or nil."
+  (when-let ((checklist (my/checklist--read name)))
+    (my/checklist--shift (cdr checklist) (1+ level))))
+
+(defun my/checklist--entry (name level)
+  "Checklist NAME as an entry at LEVEL: titled, tagged, counted."
+  (let ((checklist (or (my/checklist--read name)
+                       (user-error "No checklist %s" name))))
+    (with-temp-buffer
+      (delay-mode-hooks (org-mode))
+      (insert (make-string level ?*) " " (car checklist) " [/] :checklist:\n"
+              (my/checklist--shift (cdr checklist) (1+ level)) "\n")
+      (org-update-statistics-cookies 'all)
+      (buffer-string))))
+
+(defun my/checklist-read-name (&optional prompt new-ok)
+  "Ask for a checklist name, titles shown alongside.
+With NEW-OK, a name that does not exist yet is accepted."
+  (let ((names (my/checklist-names)))
+    (completing-read
+     (or prompt "Checklist: ")
+     (my/org--annotated-table                 ; section 14
+      names
+      (mapcar (lambda (name) (cons name (car (my/checklist--read name)))) names))
+     nil (not new-ok))))
+
+(defun my/checklist-capture ()
+  "Ask for a checklist; return its entry for a capture template.
+The leading \"* \" is left to the template."
+  (substring (my/checklist--entry (my/checklist-read-name) 1) 2))
+
+(defun my/checklist-insert (name &optional bare)
+  "Insert checklist NAME as the last child of the heading at point.
+Before the first heading it goes at the end of the file, at level 1.
+With BARE (\\[universal-argument]), insert only the items, at point."
+  (interactive (list (my/checklist-read-name) current-prefix-arg))
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not an Org buffer"))
+  (if bare
+      (let ((items (or (my/checklist-items name (or (org-current-level) 0))
+                       (user-error "No checklist %s" name))))
+        (unless (bolp) (insert "\n"))
+        (insert items "\n")
+        (org-update-statistics-cookies nil))
+    (let ((level (if (org-before-first-heading-p)
+                     (progn (goto-char (point-max)) 1)
+                   (prog1 (1+ (org-current-level))
+                     (org-end-of-subtree t t)))))
+      (unless (bolp) (insert "\n"))
+      (save-excursion (insert (my/checklist--entry name level)))
+      (org-fold-show-subtree))))
+
+(defun my/checklist-edit (name)
+  "Open checklist template NAME. An unknown NAME starts a new template."
+  (interactive (list (my/checklist-read-name
+                      "Checklist (a new name starts one): " t)))
+  (find-file (my/checklist--file name))
+  (when (= (buffer-size) 0)
+    (insert "#+title: " (read-string "Title: ") "\n\n- [ ] ")))
+
+(global-set-key (kbd "C-c k") #'my/checklist-insert)
+(global-set-key (kbd "C-c K") #'my/checklist-edit)
+
+;; --- Daily notes ----------------------------------
+;;
+;;   calendar/<YYYY>/<MM>/<YYYY-MM-DD>.org
+;;
+;; A daily note is an org-roam node (TYPE calendar), titled with its
+;; date, so a note can link to a day and a day shows its backlinks.
+;; It has two top-level headings:
+;;   Schedule  time blocks, generated from a day template; the only
+;;             part the generator ever rewrites
+;;   Notes     yours: quick notes, tasks and checklists from capture
+;;
+;;   C-c j j  today          C-c j n / C-c j p  next / previous note
+;;   C-c j d  any date       C-c j g            schedule for a day
+;;   C-c j w  schedule for a week, C-c j W for several weeks
+;;
+;; A note is created as soon as it is opened or captured into.
+
+(defun my/org-day--skeleton (date)
+  "Text of a new daily note for DATE."
+  (concat ":PROPERTIES:\n"
+          ":ID:       " (org-id-new) "\n"
+          ":TYPE:     calendar\n"
+          ":END:\n"
+          "#+title: " (my/org-day--stamp date) "\n\n"
+          "* Schedule\n"
+          "* Notes\n"))
+
+(defun my/org-day--buffer (date)
+  "Buffer visiting DATE's daily note, which is created when missing."
+  (let ((file (my/org-day-file date)))
+    (make-directory (file-name-directory file) t)
+    (with-current-buffer (find-file-noselect file)
+      (when (= (buffer-size) 0)
+        (insert (my/org-day--skeleton date))
+        (save-buffer))
+      (current-buffer))))
+
+(defun my/org-day--heading (name)
+  "Position of top-level heading NAME in this buffer, nil if absent."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((case-fold-search nil))
+      (when (re-search-forward
+             (format "^\\* %s\\(?:[ \t]\\|$\\)" (regexp-quote name)) nil t)
+        (match-beginning 0)))))
+
+(defun my/org-day-goto-notes ()
+  "Capture target: the Notes heading of today's daily note."
+  (set-buffer (my/org-day--buffer (current-time)))
+  (widen)
+  (goto-char (or (my/org-day--heading "Notes")
+                 (progn (goto-char (point-max))
+                        (unless (bolp) (insert "\n"))
+                        (save-excursion (insert "* Notes\n"))
+                        (point)))))
+
+(defun my/org-day-visit (date)
+  "Open DATE's daily note."
+  (pop-to-buffer-same-window (my/org-day--buffer date)))
+
+(defun my/org-day-today ()
+  "Open today's daily note."
+  (interactive)
+  (my/org-day-visit (current-time)))
+
+(defun my/org-day-goto (date)
+  "Open the daily note of DATE, picked in the calendar."
+  (interactive (list (org-read-date nil t nil "Day: ")))
+  (my/org-day-visit date))
+
+(defun my/org-day--neighbour (n)
+  "Open the existing daily note N notes after this one, before if N < 0.
+Outside a daily note, count from today."
+  (let* ((here (or (and buffer-file-name (my/org-day--date-of buffer-file-name))
+                   (format-time-string "%Y-%m-%d")))
+         (files (my/org-day--files))
+         (side (if (> n 0)
+                   (seq-filter (lambda (f) (string< here (my/org-day--date-of f)))
+                               files)
+                 (reverse (seq-filter (lambda (f) (string< (my/org-day--date-of f) here))
+                                      files))))
+         (file (nth (1- (abs n)) side)))
+    (if file
+        (find-file file)
+      (user-error "No %s daily note" (if (> n 0) "later" "earlier")))))
+
+(defun my/org-day-next (n)
+  "Open the next existing daily note, or the N-th one."
+  (interactive "p")
+  (my/org-day--neighbour n))
+
+(defun my/org-day-previous (n)
+  "Open the previous existing daily note, or the N-th one back."
+  (interactive "p")
+  (my/org-day--neighbour (- n)))
+
+;; --- Schedules from day templates -----------------
+;;
+;;   templates/<name>-template.org  one day per file, any fixed date inside
+;;   my/org-week-plan               default template for each weekday
 ;;
 ;; A template is a flat chronological list: a heading, one area tag, one
-;; timestamp. The generator moves the timestamps to the target date and
-;; derives each block's CATEGORY from its area tag. Generated blocks
-;; carry no repeaters, so any single block can be deleted, moved or
-;; stretched without touching other days.
-
-(defvar my/org-template-dir (expand-file-name "templates" my/org-dir)
-  "Day templates. Not scanned by the agenda, excluded from org-roam.")
+;; timestamp, optionally a body. The generator moves the timestamps to
+;; the target date, derives each block's CATEGORY from its area tag and
+;; puts the blocks under the day's Schedule, recording the template's
+;; name in its TEMPLATE property. Generated blocks carry no repeaters,
+;; so any single block can be deleted, moved or stretched without
+;; touching other days. A "#+checklist: NAME" line in a block's body
+;; becomes the items of that checklist; a "[/]" cookie in the block's
+;; heading counts them.
+;;
+;; Every template covers its own calendar day only. A night shift is
+;; split at midnight: shift-night runs to 23:59, and shift-recovery
+;; opens with the rest of it, 00:00 to the morning briefing.
 
 (defvar my/org-week-plan
   '((1 . "monday-template")
@@ -677,24 +1132,45 @@ new name is accepted: knowledge/coding/python, knowledge/work/pcs7."
     (6 . "saturday-template")
     (0 . "sunday-template"))
   "Weekday number (0 = Sunday) to a template name in `my/org-template-dir'.
-Several weekdays may point at the same template.")
+Several weekdays may point at the same template. Templates not listed
+here are still offered by `my/org-day-generate'.")
 
-(defun my/org-date+ (time n)
-  "Return TIME shifted by N days. Uses decoded time, so DST-safe."
-  (let ((d (decode-time time)))
-    (setf (decoded-time-day d) (+ (decoded-time-day d) n))
-    (encode-time d)))
+(defun my/org-templates ()
+  "Template names: those of `my/org-week-plan' in weekday order, then the rest."
+  (let ((files (mapcar #'file-name-base
+                       (directory-files my/org-template-dir nil
+                                        "-template\\.org\\'"))))
+    (append (seq-filter (lambda (name) (member name files))
+                        (delete-dups (mapcar #'cdr my/org-week-plan)))
+            (seq-remove (lambda (name) (rassoc name my/org-week-plan))
+                        files))))
 
-(defun my/org-monday-of (time)
-  "Return the Monday of the week containing TIME."
-  (let ((dow (decoded-time-weekday (decode-time time))))
-    (my/org-date+ time (- (mod (- dow 1) 7)))))
+(defun my/org-template--title (name)
+  "The #+title of template NAME, or nil."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name (concat name ".org") my/org-template-dir) nil 0 1000)
+    (when (re-search-forward "^#\\+title:[ \t]*\\(.+\\)$" nil t)
+      (match-string 1))))
+
+(defun my/org-day--default-template (date)
+  "The template `my/org-week-plan' gives DATE's weekday, or nil."
+  (cdr (assq (decoded-time-weekday (decode-time date)) my/org-week-plan)))
+
+(defun my/org-read-template (date)
+  "Ask for a template for DATE. Its weekday's template is the default."
+  (let ((names (my/org-templates)))
+    (completing-read
+     (format "Template for %s: " (my/org-day--stamp date))
+     (my/org--annotated-table               ; section 14
+      names
+      (mapcar (lambda (name) (cons name (my/org-template--title name))) names))
+     nil t nil nil (my/org-day--default-template date))))
 
 (defun my/org-blocks--render (template date)
   "Return TEMPLATE's blocks moved to DATE, or nil if TEMPLATE is missing."
   (let ((file (expand-file-name (concat template ".org") my/org-template-dir))
-        (stamp (let ((system-time-locale "C"))
-                 (format-time-string "%Y-%m-%d %a" date))))
+        (stamp (my/org-day--stamp date)))
     (when (file-exists-p file)
       (with-temp-buffer
         (insert-file-contents file)
@@ -713,62 +1189,148 @@ Several weekdays may point at the same template.")
         (while (re-search-forward
                 "<[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} [^ >]+" nil t)
           (replace-match (concat "<" stamp) t t))
-        ;; CATEGORY from the area tag
+        ;; Checklists in place of their #+checklist: lines. Blocks are
+        ;; level 1 here, so headings inside a list start at level 2.
+        (goto-char (point-min))
+        (while (re-search-forward
+                "^[ \t]*#\\+checklist:[ \t]*\\(\\S-+\\)[ \t]*$" nil t)
+          (let* ((name (match-string 1))
+                 (items (save-match-data (my/checklist-items name 1))))
+            (replace-match (or items (format "No checklist: %s" name)) t t)))
+        ;; CATEGORY from the area tag, [0/6] in place of [/]
         (delay-mode-hooks (org-mode))
+        (org-update-statistics-cookies 'all)
         (org-map-entries
          (lambda ()
            (when-let ((area (seq-find (lambda (tag) (member tag my/org-areas))
                                       (org-get-tags nil t))))
              (org-set-property "CATEGORY" area))))
-        ;; Demote by one level to nest under the day heading
+        ;; Demote by one level to nest under Schedule
         (goto-char (point-min))
         (while (re-search-forward "^\\*" nil t)
           (replace-match "**"))
         (buffer-string)))))
 
-(defun my/org-week--write (start)
-  "Write the generated week containing START. Return the file name."
+(defun my/org-day--schedule (date template)
+  "The Schedule heading of DATE with TEMPLATE's blocks under it, as text."
+  (let ((body (and template (my/org-blocks--render template date))))
+    (concat "* Schedule\n"
+            (if template
+                (format ":PROPERTIES:\n:TEMPLATE: %s\n:END:\n" template)
+              "")
+            (cond (body (let ((text (string-trim-right body)))
+                          (if (string-empty-p text) "" (concat text "\n"))))
+                  (template (format "No template: %s\n" template))
+                  (t "")))))
+
+(defun my/org-day--planned-p (date)
+  "Non-nil when DATE's daily note has blocks under its Schedule."
+  (let ((file (my/org-day-file date)))
+    (and (file-exists-p file)
+         (with-temp-buffer
+           (insert-file-contents file)
+           (let ((case-fold-search nil))
+             (and (re-search-forward "^\\* Schedule\\(?:[ \t]\\|$\\)" nil t)
+                  (re-search-forward "^\\*\\{1,2\\} " nil t)
+                  (string= (match-string 0) "** ")))))))
+
+(defun my/org-day--put (date template &optional replace)
+  "Fill the Schedule of DATE's daily note from TEMPLATE and save it.
+Only Schedule is touched. One that already has blocks is replaced
+when REPLACE is `yes', after a question when REPLACE is nil, and
+kept otherwise. Return the position of the Schedule heading."
+  (with-current-buffer (my/org-day--buffer date)
+    (prog1
+        (org-with-wide-buffer
+         (let ((pos (my/org-day--heading "Schedule")))
+           (if pos
+               (goto-char pos)
+             ;; No Schedule: in front of the first heading, else at the end
+             (goto-char (point-min))
+             (if (re-search-forward "^\\* " nil t)
+                 (goto-char (match-beginning 0))
+               (goto-char (point-max))
+               (unless (bolp) (insert "\n")))
+             (save-excursion (insert "* Schedule\n"))))
+         (let* ((end (save-excursion
+                       (forward-line 1)
+                       (if (re-search-forward "^\\* " nil t)
+                           (match-beginning 0)
+                         (point-max))))
+                (filled (save-excursion
+                          (forward-line 1)
+                          (re-search-forward "^\\*\\* " end t))))
+           (when (or (not filled)
+                     (eq replace 'yes)
+                     (and (null replace)
+                          (y-or-n-p
+                           (format "%s already planned (%s), replace? "
+                                   (my/org-day--stamp date)
+                                   (or (org-entry-get (point) "TEMPLATE")
+                                       "by hand")))))
+             (delete-region (point) end)
+             (save-excursion (insert (my/org-day--schedule date template)))))
+         (point))
+      (save-buffer))))
+
+(defun my/org-day-generate (date template)
+  "Fill DATE's Schedule from TEMPLATE and open the daily note there.
+Interactively, asks for the date, then for the template."
+  (interactive
+   (let ((date (org-read-date nil t nil "Day: ")))
+     (list date (my/org-read-template date))))
+  (let ((pos (my/org-day--put date template)))
+    (my/org-agenda-files-refresh)
+    (my/org-day-visit date)
+    (widen)
+    (goto-char pos)
+    (org-fold-show-subtree)
+    (recenter 0)))
+
+(defun my/org-week--fill (start)
+  "Fill every day of the week containing START from `my/org-week-plan'.
+Days already planned are replaced or kept after one question. Notes
+opened only for this are closed again. Return the week's Monday."
   (let* ((monday (my/org-monday-of start))
-         (file (expand-file-name
-                (let ((system-time-locale "C"))
-                  (format-time-string "%G-W%V.org" monday))
-                (expand-file-name "calendar" my/org-dir))))
-    (if (and (file-exists-p file)
-             (not (y-or-n-p (format "%s exists, overwrite? "
-                                    (file-name-nondirectory file)))))
-        (message "Skipped %s" (file-name-nondirectory file))
-      (with-temp-file file
-        (insert (let ((system-time-locale "C"))
-                  (format-time-string
-                   "#+title: Week of %Y-%m-%d\n\n"
-                   monday)))
-        (dotimes (n 7)
-          (let* ((date (my/org-date+ monday n))
-                 (dow (decoded-time-weekday (decode-time date)))
-                 (template (cdr (assq dow my/org-week-plan)))
-                 (body (and template (my/org-blocks--render template date))))
-            (insert (let ((system-time-locale "C"))
-                      (format-time-string "* %Y-%m-%d %a\n" date)))
-            (cond (body (insert body) (unless (bolp) (insert "\n")))
-                  (template (insert (format "No template: %s\n" template)))))))
-      (my/org-agenda-files-refresh))
-    file))
+         (days (mapcar (lambda (n) (my/org-date+ monday n)) (number-sequence 0 6)))
+         (planned (seq-count #'my/org-day--planned-p days))
+         (replace (if (or (zerop planned)
+                          (y-or-n-p
+                           (format "Week of %s: %d day(s) already planned, replace them? "
+                                   (format-time-string "%Y-%m-%d" monday) planned)))
+                      'yes
+                    'no))
+         (before (buffer-list)))
+    (dolist (date days)
+      (my/org-day--put date (my/org-day--default-template date) replace))
+    (dolist (buffer (buffer-list))
+      (unless (or (memq buffer before) (buffer-modified-p buffer))
+        (kill-buffer buffer)))
+    monday))
 
 (defun my/org-week-generate (start)
-  "Generate the week containing START from day templates and open it."
+  "Fill the week containing START from day templates, open its Monday."
   (interactive (list (org-read-date nil t nil "Any day of the week")))
-  (find-file (my/org-week--write start)))
+  (let ((monday (my/org-week--fill start)))
+    (my/org-agenda-files-refresh)
+    (my/org-day-visit monday)))
 
 (defun my/org-weeks-generate (start count)
-  "Generate COUNT consecutive weeks, the first one containing START."
+  "Fill COUNT consecutive weeks, the first one containing START."
   (interactive (list (org-read-date nil t nil "Any day of the first week")
                      (read-number "Weeks: " 4)))
   (dotimes (i count)
-    (my/org-week--write (my/org-date+ start (* 7 i))))
+    (my/org-week--fill (my/org-date+ start (* 7 i))))
+  (my/org-agenda-files-refresh)
   (message "Generated %d week(s)" count))
 
-(global-set-key (kbd "C-c n w") #'my/org-week-generate)
-(global-set-key (kbd "C-c n W") #'my/org-weeks-generate)
+(global-set-key (kbd "C-c j j") #'my/org-day-today)
+(global-set-key (kbd "C-c j d") #'my/org-day-goto)
+(global-set-key (kbd "C-c j n") #'my/org-day-next)
+(global-set-key (kbd "C-c j p") #'my/org-day-previous)
+(global-set-key (kbd "C-c j g") #'my/org-day-generate)
+(global-set-key (kbd "C-c j w") #'my/org-week-generate)
+(global-set-key (kbd "C-c j W") #'my/org-weeks-generate)
 
 ;; --------------------------------------------------
 ;; 11. Org reading and writing
@@ -952,9 +1514,10 @@ and rewrite its link to point at the local copy."
   ;; Every Org file under ~/org is a potential node
   (org-roam-directory my/org-dir)
   (org-roam-completion-everywhere t)
-  ;; Skip generated and archived material
+  ;; Skip archives and templates. Daily notes are indexed: a note can
+  ;; link to a day, and a day lists what links to it.
   (org-roam-file-exclude-regexp
-   '("/archive/" "/templates/" "/calendar/" "/attachments/" "/\\.git/"))
+   '("/archive/" "/templates/" "/attachments/" "/\\.git/"))
   :bind (("C-c n f" . org-roam-node-find)
          ("C-c n i" . org-roam-node-insert)
          ("C-c n c" . org-roam-capture)
@@ -962,21 +1525,52 @@ and rewrite its link to point at the local copy."
          ("C-c n g" . org-roam-graph)
          ("C-c n e" . org-roam-extract-subtree)
          ("C-c n s" . org-roam-db-sync)
+         ("C-c n t" . org-roam-tag-add)       ; completes over existing tags
+         ("C-c n a" . org-roam-alias-add)     ; a second name for the node
+         ("C-c n k" . my/org-knowledge-edit)  ; domain, topics, kind of this note
          :map org-mode-map
          ("C-M-i" . completion-at-point))
   :config
-  ;; Show the subdirectory (that is, the type) and tags in the selector
+  ;; Columns in the selector. They mean the same for every node, each
+  ;; kind of node fills them from its own properties:
+  ;;   type    TYPE, else the top folder, else the file name
+  ;;   place   knowledge: DOMAIN (GROUP for group hubs); else AREA
+  ;;   kind    knowledge: KIND; projects: STATUS
+  ;;   topics  TOPICS, else tags that do not repeat the above
+  ;; A heading with its own ID takes whatever it lacks from its file.
+  ;; Orderless matches the whole line: "db howto", "work active".
   (cl-defmethod org-roam-node-type ((node org-roam-node))
-    "Return the first two path components of NODE under `org-roam-directory'.
-That is \"projects/work\" or \"knowledge/coding\", not the whole path."
-    (let* ((rel (file-relative-name (org-roam-node-file node)
-                                    org-roam-directory))
-           (parts (butlast (split-string rel "/"))))
-      (mapconcat #'identity (seq-take parts 2) "/")))
+    "TYPE of NODE, else its top folder under `org-roam-directory'."
+    (or (my/org-roam--prop node "TYPE")
+        (let ((parts (split-string (file-relative-name (org-roam-node-file node)
+                                                       org-roam-directory)
+                                   "/")))
+          (if (cdr parts) (car parts) (file-name-base (car parts))))))
+
+  (cl-defmethod org-roam-node-place ((node org-roam-node))
+    "DOMAIN or GROUP of a knowledge NODE, AREA of anything else."
+    (or (my/org-roam--prop node "DOMAIN")
+        (my/org-roam--prop node "GROUP")
+        (my/org-roam--prop node "AREA")
+        ""))
+
+  (cl-defmethod org-roam-node-kind ((node org-roam-node))
+    "KIND of a knowledge NODE, STATUS of a project."
+    (or (my/org-roam--prop node "KIND")
+        (my/org-roam--prop node "STATUS")
+        ""))
+
+  (cl-defmethod org-roam-node-topics ((node org-roam-node))
+    "TOPICS of NODE, else its tags minus areas and types."
+    (or (my/org-roam--prop node "TOPICS")
+        (string-join (seq-remove (lambda (tag) (or (member tag my/org-areas)
+                                                   (member tag my/org-types)))
+                                 (org-roam-node-tags node))
+                     " ")))
 
   (setq org-roam-node-display-template
-      (concat "${type:18} ${title:64} "
-              (propertize "${tags:24}" 'face 'org-tag)))
+      (concat "${type:10} ${place:12} ${kind:15} ${title:56} "
+              (propertize "${topics:30}" 'face 'org-tag)))
 
   ;; The backlinks buffer on the right, a third of the frame
   (add-to-list 'display-buffer-alist
@@ -1001,22 +1595,356 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
 ;; DIR is set with #+PROPERTY, not in the property drawer: a keyword
 ;; becomes a global buffer property that every heading inherits, which
 ;; is what org-attach needs to skip its data/<id>/ store.
+
+;; --- Node properties ------------------------------
+
+(defun my/org-roam--value (props key)
+  "Value of KEY in the property alist PROPS, nil when missing or empty."
+  (let ((value (cdr (assoc-string key props t))))
+    (unless (or (null value) (string-empty-p value)) value)))
+
+(defun my/org-roam--own-prop (node key)
+  "KEY from NODE's own property drawer."
+  (my/org-roam--value (org-roam-node-properties node) key))
+
+(defvar my/org-roam--file-props-cache (make-hash-table :test #'equal)
+  "File to (MTIME . PROPERTIES) of its file-level node.")
+
+(defun my/org-roam--file-props (node)
+  "Properties of the file-level node of NODE's file, cached by mtime."
+  (let* ((file (org-roam-node-file node))
+         (mtime (org-roam-node-file-mtime node))
+         (hit (gethash file my/org-roam--file-props-cache)))
+    (if (and hit (equal (car hit) mtime))
+        (cdr hit)
+      (let ((props (caar (org-roam-db-query
+                          [:select properties :from nodes
+                           :where (and (= file $s1) (= level 0))]
+                          file))))
+        (puthash file (cons mtime props) my/org-roam--file-props-cache)
+        props))))
+
+(defun my/org-roam--prop (node key)
+  "KEY of NODE; a heading node falls back to its file's value."
+  (or (my/org-roam--own-prop node key)
+      (and (> (org-roam-node-level node) 0)
+           (my/org-roam--value (my/org-roam--file-props node) key))))
+
+;; --- Knowledge prompts ----------------------------
+;; Asked in this order: domain, topics, kind. Each is asked once per
+;; capture, like the area prompt, and the answers are kept until the
+;; capture ends: the body and the hub check read them too.
+
+(defun my/org--annotated-table (candidates hints &optional groups)
+  "Completion table over CANDIDATES, kept in the given order.
+HINTS and GROUPS are alists from a candidate to the grey hint shown
+next to it and to the group heading it is listed under."
+  (let ((width (+ 2 (apply #'max 0 (mapcar #'length candidates)))))
+    (lambda (string pred action)
+      (if (eq action 'metadata)
+          `(metadata
+            (display-sort-function . identity)
+            (cycle-sort-function . identity)
+            (annotation-function
+             . ,(lambda (candidate)
+                  (when-let ((hint (cdr (assoc candidate hints))))
+                    (concat (make-string (max 1 (- width (length candidate))) ?\s)
+                            (propertize hint 'face 'completions-annotations)))))
+            ,@(when groups
+                `((group-function
+                   . ,(lambda (candidate transform)
+                        (if transform
+                            candidate
+                          (cdr (assoc candidate groups))))))))
+        (complete-with-action action candidates string pred)))))
+
+(defun my/org-knowledge-read-domain (&optional default)
+  "Ask for a domain, grouped and hinted. DEFAULT is taken on empty input."
+  (let* ((names (my/org-knowledge--domain-names))
+         (info (mapcar #'my/org-knowledge--domain names)))
+    (completing-read
+     "Domain: "
+     (my/org--annotated-table
+      names
+      (mapcar (lambda (d) (cons (nth 1 d) (format "%s: %s" (nth 2 d) (nth 3 d))))
+              info)
+      (mapcar (lambda (d) (cons (nth 1 d)
+                                (nth 1 (assoc (car d) my/org-knowledge-domains))))
+              info))
+     nil t nil nil default)))
+
+(defun my/org-knowledge--used-topics ()
+  "Every TOPICS value already used in org-roam, sorted."
+  (sort (delete-dups
+         (mapcan (lambda (row)
+                   (when-let ((value (my/org-roam--value (car row) "TOPICS")))
+                     (split-string value)))
+                 (org-roam-db-query [:select properties :from nodes])))
+        #'string<))
+
+(defun my/org-knowledge-read-topics (&optional current)
+  "Ask for topics, comma-separated, possibly none.
+Return them space-separated; spaces inside a topic become dashes.
+CURRENT, a space-separated string, is offered for editing."
+  (string-join
+   (seq-remove #'string-empty-p
+               (mapcar (lambda (topic)
+                         (replace-regexp-in-string
+                          "[[:space:]]+" "-" (string-trim topic)))
+                       (completing-read-multiple
+                        "Topics, comma-separated, may be empty: "
+                        (my/org-knowledge--used-topics) nil nil
+                        (when current (string-join (split-string current) ",")))))
+   " "))
+
+(defun my/org-knowledge-read-kind (&optional default)
+  "Ask for a note form, hinted. DEFAULT is taken on empty input."
+  (completing-read
+   "Kind: "
+   (my/org--annotated-table
+    (mapcar #'car my/org-knowledge-kinds)
+    (mapcar (lambda (k) (cons (car k) (nth 2 k))) my/org-knowledge-kinds))
+   nil t nil nil default))
+
+(defvar my/org-knowledge--choice nil
+  "Answers given in the knowledge capture in progress, as an alist.")
+
+(defun my/org-knowledge--ask (key reader)
+  "Answer KEY for this capture, calling READER the first time only."
+  (let ((cell (assq key my/org-knowledge--choice)))
+    (if cell
+        (cdr cell)
+      (let ((value (funcall reader)))
+        (push (cons key value) my/org-knowledge--choice)
+        value))))
+
+(defun my/org-pick-domain () (my/org-knowledge--ask 'domain #'my/org-knowledge-read-domain))
+(defun my/org-pick-topics () (my/org-knowledge--ask 'topics #'my/org-knowledge-read-topics))
+(defun my/org-pick-kind   () (my/org-knowledge--ask 'kind   #'my/org-knowledge-read-kind))
+
+;; --- Starting body by kind ------------------------
+
+(defvar my/org-knowledge-skeletons
+  '(("howto"           . "\n* Задача\n\n* Шаги\n\n* Проверка\n")
+    ("troubleshooting" . "\n* Симптом\n\n* Причина\n\n* Решение\n\n* Как проверить\n")
+    ("source"          . "\n- Источник :: \n- Автор :: \n\n* Главное\n\n* Конспект\n")
+    ("hub"             . "\n#+BEGIN: knowledge-index :domain \"%s\"\n#+END:\n"))
+  "Body a new knowledge note starts with, by KIND. %s is the domain.
+Kinds missing here start empty.")
+
+(defun my/org-knowledge-body ()
+  "Starting body for the knowledge note being captured."
+  (let ((skeleton (cdr (assoc (cdr (assq 'kind my/org-knowledge--choice))
+                              my/org-knowledge-skeletons))))
+    (if skeleton
+        (format skeleton (or (cdr (assq 'domain my/org-knowledge--choice)) ""))
+      "")))
+
+;; --- Hubs -----------------------------------------
+;; Every domain has a hub, knowledge/hub-<domain>.org, and every group
+;; a group hub, knowledge/hub-group-<group>.org. They are created the
+;; first time a note lands in the domain. Write whatever you like in a
+;; hub; the knowledge-index block in it is rebuilt from the org-roam
+;; database each time the hub is opened, or with C-c C-c on its
+;; #+BEGIN line:
+;;   :domain "db"   every note of the domain, grouped by KIND
+;;   :group "it"    every domain hub of the group, with note counts
+
+(defun my/org-knowledge--nodes ()
+  "Every file-level knowledge node, sorted by title."
+  (require 'org-roam)
+  (sort (seq-filter (lambda (node)
+                      (and (= (org-roam-node-level node) 0)
+                           (equal (my/org-roam--own-prop node "TYPE") "knowledge")))
+                    (org-roam-node-list))
+        (lambda (a b)
+          (string-collate-lessp (org-roam-node-title a) (org-roam-node-title b) nil t))))
+
+(defun my/org-knowledge--hub-p (node)
+  "Non-nil when NODE is a hub."
+  (equal (my/org-roam--own-prop node "KIND") "hub"))
+
+(defun my/org-knowledge--hub (key value)
+  "The hub node whose property KEY is VALUE, or nil."
+  (seq-find (lambda (node)
+              (and (my/org-knowledge--hub-p node)
+                   (equal (my/org-roam--own-prop node key) value)))
+            (my/org-knowledge--nodes)))
+
+(defun my/org-knowledge--link (node)
+  "An id: link to NODE, titled."
+  (org-link-make-string (concat "id:" (org-roam-node-id node))
+                        (org-roam-node-title node)))
+
+(defun my/org-knowledge--index-domain (domain)
+  "Insert the notes of DOMAIN, grouped by KIND."
+  (let* ((kinds (mapcar #'car my/org-knowledge-kinds))
+         (notes (seq-filter (lambda (node)
+                              (and (equal (my/org-roam--own-prop node "DOMAIN") domain)
+                                   (not (my/org-knowledge--hub-p node))))
+                            (my/org-knowledge--nodes)))
+         (sections
+          (delq nil
+                (mapcar
+                 (lambda (kind)
+                   (when-let ((these (seq-filter
+                                      (lambda (node)
+                                        (equal (car (member (my/org-roam--own-prop node "KIND")
+                                                            kinds))
+                                               (car kind)))
+                                      notes)))
+                     (concat "*" (nth 1 kind) "*\n"
+                             (mapconcat (lambda (node)
+                                          (concat "- " (my/org-knowledge--link node)))
+                                        these "\n"))))
+                 (append my/org-knowledge-kinds '((nil "Без типа")))))))
+    (insert (if sections (string-join sections "\n\n") "Пока нет заметок."))))
+
+(defun my/org-knowledge--index-group (group)
+  "Insert the domains of GROUP that have a hub or notes, with counts."
+  (let* ((nodes (my/org-knowledge--nodes))
+         (lines
+          (delq nil
+                (mapcar
+                 (lambda (domain)
+                   (let* ((name (car domain))
+                          (mine (seq-filter (lambda (node)
+                                              (equal (my/org-roam--own-prop node "DOMAIN")
+                                                     name))
+                                            nodes))
+                          (hub (seq-find #'my/org-knowledge--hub-p mine))
+                          (count (seq-count (lambda (node)
+                                              (not (my/org-knowledge--hub-p node)))
+                                            mine)))
+                     (when (or hub (> count 0))
+                       (format "- %s (%d)"
+                               (if hub (my/org-knowledge--link hub) (nth 1 domain))
+                               count))))
+                 (cddr (assoc group my/org-knowledge-domains))))))
+    (insert (if lines (string-join lines "\n") "Пока нет заметок."))))
+
+(defun org-dblock-write:knowledge-index (params)
+  "Dynamic block listing knowledge notes. PARAMS: :domain or :group."
+  (let ((domain (plist-get params :domain))
+        (group (plist-get params :group)))
+    (cond (domain (my/org-knowledge--index-domain (format "%s" domain)))
+          (group  (my/org-knowledge--index-group (format "%s" group))))))
+
+(defun my/org-knowledge-refresh-index ()
+  "Rebuild knowledge-index blocks in this buffer.
+The buffer stays unmodified when the lists have not changed."
+  (when (and buffer-file-name
+             (save-excursion
+               (goto-char (point-min))
+               (re-search-forward "^[ \t]*#\\+BEGIN: knowledge-index" nil t)))
+    (let ((hash (buffer-hash))
+          (modified (buffer-modified-p)))
+      (with-demoted-errors "knowledge-index: %S"
+        (org-update-all-dblocks))
+      (when (equal hash (buffer-hash))
+        (set-buffer-modified-p modified)))))
+
+(add-hook 'org-mode-hook #'my/org-knowledge-refresh-index)
+
+(defun my/org-knowledge--write-hub (file props title body)
+  "Create hub FILE under `my/org-dir' unless it exists. Return its ID.
+PROPS is an alist for the file drawer, TITLE and BODY its text."
+  (let ((file (expand-file-name file my/org-dir))
+        (id (org-id-new)))
+    (unless (file-exists-p file)
+      (with-temp-file file
+        (insert ":PROPERTIES:\n"
+                (format ":ID:       %s\n" id)
+                (mapconcat (lambda (p) (format ":%-9s %s\n" (concat (car p) ":") (cdr p)))
+                           props "")
+                ":END:\n"
+                "#+title: " title "\n\n"
+                body))
+      (org-roam-db-update-file file)
+      (message "Created hub %s" (file-name-nondirectory file))
+      id)))
+
+(defun my/org-knowledge-ensure-hubs (domain &optional group-only)
+  "Create DOMAIN's group hub and its own hub when they are missing.
+With GROUP-ONLY, skip the domain hub: the note is that hub itself."
+  (when-let ((d (my/org-knowledge--domain domain)))
+    (let* ((group (car d))
+           (group-label (nth 1 (assoc group my/org-knowledge-domains)))
+           (group-hub (my/org-knowledge--hub "GROUP" group))
+           (group-id (if group-hub
+                         (org-roam-node-id group-hub)
+                       (my/org-knowledge--write-hub
+                        (format "knowledge/hub-group-%s.org" group)
+                        `(("TYPE" . "knowledge") ("GROUP" . ,group) ("KIND" . "hub"))
+                        group-label
+                        (format "#+BEGIN: knowledge-index :group \"%s\"\n#+END:\n"
+                                group)))))
+      (unless (or group-only (my/org-knowledge--hub "DOMAIN" domain))
+        (my/org-knowledge--write-hub
+         (format "knowledge/hub-%s.org" domain)
+         `(("TYPE" . "knowledge") ("DOMAIN" . ,domain) ("KIND" . "hub"))
+         (nth 2 d)
+         (concat (if group-id (format "Группа: [[id:%s][%s]]\n\n" group-id group-label) "")
+                 (format "#+BEGIN: knowledge-index :domain \"%s\"\n#+END:\n"
+                         domain)))))))
+
+(defun my/org-knowledge--after-capture ()
+  "Create missing hubs for a finished knowledge capture, then forget it."
+  (let ((choice my/org-knowledge--choice))
+    (setq my/org-knowledge--choice nil)
+    (when (and choice (not org-note-abort))
+      (with-demoted-errors "Knowledge hubs: %S"
+        (my/org-knowledge-ensure-hubs (cdr (assq 'domain choice))
+                                      (equal (cdr (assq 'kind choice)) "hub"))))))
+
+(add-hook 'org-capture-after-finalize-hook #'my/org-knowledge--after-capture)
+
+;; A capture cancelled with C-g during a prompt never finalizes, and
+;; its answers would leak into the next capture. Start each one clean.
+(defun my/org-capture-forget-answers (&rest _)
+  "Drop answers left over from an interrupted capture."
+  (setq my/org-knowledge--choice nil
+        my/org-area-choice nil))
+
+(advice-add 'org-capture :before #'my/org-capture-forget-answers)
+
+(defun my/org-knowledge-edit ()
+  "Ask domain, topics and kind for the note in this buffer and store them.
+Current values are the defaults. Works on old notes too: TYPE is set to
+knowledge. Missing hubs are created afterwards."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not an Org buffer"))
+  (let* ((pom (point-min))
+         (domain (my/org-knowledge-read-domain (org-entry-get pom "DOMAIN")))
+         (topics (my/org-knowledge-read-topics (org-entry-get pom "TOPICS")))
+         (kind (my/org-knowledge-read-kind (org-entry-get pom "KIND"))))
+    (org-entry-put pom "TYPE" "knowledge")
+    (org-entry-put pom "DOMAIN" domain)
+    (org-entry-put pom "TOPICS" topics)
+    (org-entry-put pom "KIND" kind)
+    (save-buffer)
+    (my/org-knowledge-ensure-hubs domain (equal kind "hub"))))
+
+;; --- Capture templates ----------------------------
+
 (setq org-roam-capture-templates
-      '(("p" "project" plain "%?"
+      '(("k" "knowledge" plain "%?%(my/org-knowledge-body)"
+         :target (file+head
+                  "knowledge/${title}.org"
+                  ":PROPERTIES:\n:TYPE:     knowledge\n:DOMAIN:   %(my/org-pick-domain)\n:TOPICS:   %(my/org-pick-topics)\n:KIND:     %(my/org-pick-kind)\n:END:\n#+title: ${title}\n#+property: DIR attachments/${title}\n")
+         :unnarrowed t)
+
+        ("p" "project" plain "%?"
          :target (file+head
                   "projects/%(my/org-pick-area)/${title}/${title}.org"
                   ":PROPERTIES:\n:TYPE: project\n:AREA: %(my/org-pick-area)\n:STATUS: active\n:STARTED: [%<%Y-%m-%d %a>]\n:FINISHED:\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :project:%(my/org-pick-area):\n#+property: DIR attachments\n\n* Tasks\n")
-         :unnarrowed t)
-
-        ("k" "knowledge" plain "%?"
-         :target (file+head
-                  "knowledge/%(my/org-pick-area)/%(my/org-pick-topic)/${title}.org"
-                  ":PROPERTIES:\n:TYPE: knowledge\n:AREA: %(my/org-pick-area)\n:TOPIC: %(my/org-pick-topic)\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :knowledge:%(my/org-pick-area):\n#+property: DIR attachments\n")
-         :unnarrowed t)
-
-        ("d" "plain note" plain "%?"
-         :target (file+head "${title}.org" "#+title: ${title}\n")
          :unnarrowed t)))
+
+;; C-c n e: the extracted subtree becomes a knowledge note. The path is
+;; asked for with this as the default, so replace the name with a
+;; kebab-case one at the prompt, then describe the note with C-c n k.
+(setq org-roam-extract-new-file-path "knowledge/${slug}.org")
 
 ;; --- Migration helper -----------------------------
 ;; org-roam only indexes files that carry a file-level :ID:. Existing
@@ -1175,7 +2103,9 @@ That is \"projects/work\" or \"knowledge/coding\", not the whole path."
      ("k" "~/org/knowledge/"  "Knowledge")
      ("c" "~/org/calendar/"   "Calendar")
      ("t" "~/org/templates/"  "Templates")
+     ("l" "~/org/templates/checklists/" "Checklists")
      ("w" "~/org/projects/workouts/training/" "Training")
+     ("s" "~/org/projects/work/shift-log/" "Shift log")
      ("e" "~/dotfiles/"       "Dotfiles")
      ("d" "~/Downloads/"      "Downloads")))
   :config
@@ -1846,5 +2776,201 @@ With DELOAD, the entry is tagged deload in a program's deload week."
 (global-set-key (kbd "C-c w s") #'my/workout-sessions)
 (global-set-key (kbd "C-c w m") #'my/workout-measurements)
 (global-set-key (kbd "C-c w r") #'my/workout-refresh-last)
+
+;; --------------------------------------------------
+;; 19. Shift log
+;; --------------------------------------------------
+;;
+;;   projects/work/shift-log/shift-log.org           project file, made with C-c n c p
+;;   projects/work/shift-log/journal/YYYY.org        every shift, datetree by date
+;;   projects/work/shift-log/reports/<date>-<shift>.org  one file per report
+;;
+;; A shift is a heading under its date, "Day shift" or "Night shift",
+;; with SHIFT (day or night) and DUTY, who was on duty, in its drawer.
+;; A night belongs to the date it starts on. Under it go plain list
+;; items, as they come: who asked, what was found and done. Something
+;; to follow up is a TODO heading under the shift; the journal is in
+;; the agenda, the reports are not.
+;;
+;; A report is a copy of the last `my/shift-report-count' shifts, named
+;; after the newest of them. Made again for the same newest shift, it
+;; is rewritten: start the report when your shift starts, make it again
+;; when the shift is filled in.
+
+(defvar my/shift-dir (expand-file-name "projects/work/shift-log" my/org-dir)
+  "Shift log project folder.")
+
+(defvar my/shift-journal-dir (expand-file-name "journal" my/shift-dir)
+  "One shift journal per year, named YYYY.org.")
+
+(defvar my/shift-report-dir (expand-file-name "reports" my/shift-dir)
+  "Generated reports.")
+
+(defvar my/shift-report-count 4
+  "Shifts in a report.")
+
+(defvar my/shift-report-text-scale 2
+  "Text size steps of an opened report, large enough to photograph.")
+
+(defvar my/shift-kinds
+  '(("day"   "Day shift"   "дневная смена")
+    ("night" "Night shift" "ночная смена"))
+  "SHIFT value, its journal heading, its name in reports.
+Listed in the order shifts follow each other within a day.")
+
+;; --- Journal --------------------------------------
+
+(defun my/shift--journals ()
+  "Shift journals, oldest year first."
+  (when (file-directory-p my/shift-journal-dir)
+    (directory-files my/shift-journal-dir t "\\`[0-9]\\{4\\}\\.org\\'")))
+
+(defun my/shift--journal (year)
+  "Shift journal for YEAR, created with its header when missing."
+  (let ((file (expand-file-name (format "%d.org" year) my/shift-journal-dir)))
+    (unless (file-exists-p file)
+      (make-directory my/shift-journal-dir t)
+      (write-region (format (concat "#+title: Shift log %d\n"
+                                    "#+category: work\n"
+                                    "#+property: DIR ../attachments\n")
+                            year)
+                    nil file))
+    file))
+
+(defun my/shift--duties ()
+  "Everyone recorded as on duty, most recent first."
+  (let ((names '()))
+    (dolist (file (my/shift--journals))
+      (with-temp-buffer
+        (insert-file-contents file)
+        (while (re-search-forward "^[ \t]*:DUTY:[ \t]+\\(.*?\\)[ \t]*$" nil t)
+          (push (match-string 1) names))))
+    (delete-dups (seq-remove #'string-empty-p names))))
+
+(defun my/shift--find (shift)
+  "Position of SHIFT under the date heading at point, nil when absent."
+  (save-excursion
+    (let ((end (save-excursion (org-end-of-subtree t) (point)))
+          (stars (format "^\\*\\{%d\\} " (1+ (org-current-level))))
+          found)
+      (while (and (not found) (re-search-forward stars end t))
+        (when (equal (org-entry-get nil "SHIFT") shift)
+          (setq found (line-beginning-position))))
+      found)))
+
+(defun my/shift--create (shift duty)
+  "Add SHIFT with DUTY under the date heading at point, in day order.
+Leave point where the first item is typed."
+  (let* ((level (1+ (org-current-level)))
+         (later (seq-some #'my/shift--find
+                          (cdr (member shift (mapcar #'car my/shift-kinds))))))
+    (goto-char (or later (progn (org-end-of-subtree t t) (point))))
+    (unless (bolp) (insert "\n"))
+    (insert (make-string level ?*) " " (nth 1 (assoc shift my/shift-kinds)) "\n"
+            ":PROPERTIES:\n"
+            ":SHIFT:    " shift "\n"
+            ":DUTY:     " duty "\n"
+            ":END:\n"
+            "- ")
+    (unless (eobp)
+      (save-excursion (insert "\n")))))
+
+(defun my/shift-entry (date shift)
+  "Open SHIFT of DATE in the shift log, ready for items.
+A shift not logged yet is created, asking who was on duty. A night
+shift belongs to the date it starts on."
+  (interactive
+   (list (org-read-date nil t nil "Shift date (a night: the date it starts): ")
+         (completing-read "Shift: " (mapcar #'car my/shift-kinds) nil t)))
+  (require 'org-datetree)
+  (let ((d (decode-time date)))
+    (pop-to-buffer-same-window
+     (find-file-noselect (my/shift--journal (nth 5 d))))
+    (widen)
+    (org-datetree-find-date-create (list (nth 4 d) (nth 3 d) (nth 5 d)))
+    (let ((pos (my/shift--find shift)))
+      (if pos
+          (progn
+            (goto-char pos)
+            (org-fold-reveal t)
+            (org-fold-show-subtree)
+            (org-end-of-subtree t))
+        (my/shift--create shift (completing-read "On duty: " (my/shift--duties)))
+        (org-fold-reveal t)
+        (save-excursion
+          (org-back-to-heading t)
+          (org-fold-show-subtree))))))
+
+(defun my/shift-journal (&optional pick)
+  "Open this year's shift journal. With PICK (C-u), choose any year."
+  (interactive "P")
+  (find-file
+   (if pick
+       (read-file-name "Journal: " (file-name-as-directory my/shift-journal-dir)
+                       nil t)
+     (my/shift--journal (nth 5 (decode-time))))))
+
+;; --- Report ---------------------------------------
+
+(defun my/shift--body ()
+  "Text of the shift at point after its drawer, trimmed."
+  (save-excursion
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (org-end-of-meta-data t)
+      (if (< (point) end)
+          (string-trim (buffer-substring-no-properties (point) end))
+        ""))))
+
+(defun my/shift--all ()
+  "Every logged shift, oldest first, as (DATE SHIFT DUTY BODY)."
+  (mapcan (lambda (file)
+            (with-current-buffer (find-file-noselect file)
+              (org-with-wide-buffer
+               (org-map-entries
+                (lambda ()
+                  (let ((day (or (car (last (org-get-outline-path))) "")))
+                    (list (substring day 0 (min 10 (length day)))
+                          (org-entry-get nil "SHIFT")
+                          (or (org-entry-get nil "DUTY") "")
+                          (my/shift--body))))
+                "SHIFT={.}" 'file))))
+          (my/shift--journals)))
+
+(defun my/shift-report (&optional count)
+  "Write a report of the last COUNT shifts and open it.
+COUNT defaults to `my/shift-report-count'; give another with C-u N.
+The file is named after the newest shift. If it exists, it is
+rewritten after a question, or opened as it is."
+  (interactive "P")
+  (let* ((count (if count (prefix-numeric-value count) my/shift-report-count))
+         (shifts (last (my/shift--all) count)))
+    (unless shifts
+      (user-error "No shifts logged in %s" my/shift-journal-dir))
+    (let* ((newest (car (last shifts)))
+           (file (expand-file-name (format "%s-%s.org" (nth 0 newest) (nth 1 newest))
+                                   my/shift-report-dir)))
+      (when (or (not (file-exists-p file))
+                (y-or-n-p (format "%s exists, make it again? Edits in it are lost. "
+                                  (file-name-nondirectory file))))
+        (make-directory my/shift-report-dir t)
+        (with-current-buffer (find-file-noselect file)
+          (erase-buffer)
+          (insert (format "#+title: Отчёт за смены %s — %s\n"
+                          (nth 0 (car shifts)) (nth 0 newest)))
+          (dolist (s shifts)
+            (insert "\n* " (nth 0 s) " "
+                    (or (nth 2 (assoc (nth 1 s) my/shift-kinds)) (nth 1 s))
+                    " " (nth 2 s) "\n")
+            (unless (string-empty-p (nth 3 s))
+              (insert (my/checklist--shift (nth 3 s) 2) "\n")))
+          (save-buffer)))
+      (find-file file)
+      (org-fold-show-all)
+      (goto-char (point-min))
+      (text-scale-set my/shift-report-text-scale))))
+
+(global-set-key (kbd "C-c r s") #'my/shift-entry)
+(global-set-key (kbd "C-c r r") #'my/shift-report)
+(global-set-key (kbd "C-c r l") #'my/shift-journal)
 
 ;;; init.el ends here
