@@ -269,24 +269,46 @@
 ;; Hide the markup characters around *bold* and /italic/
 (setq org-hide-emphasis-markers t)
 
-;; Inline images
-(setq org-startup-with-inline-images t
-      org-image-actual-width nil
-      org-image-max-width 600)
+;; Inline images, never wider than 600 px. Org 9.7 (Emacs 30) caps
+;; only images that are larger. Org 9.6 (Emacs 29) has no cap, so every
+;; image is shown 600 px wide there; small ones get stretched. Either
+;; way, #+attr_org: :width 300 above a link sets that image's width.
+(setq org-startup-with-inline-images t)
+(with-eval-after-load 'org
+  (if (version< (org-release) "9.7")
+      (setq org-image-actual-width '(600))
+    (setq org-image-actual-width nil
+          org-image-max-width 600)))
 
 ;; --- Vocabulary -----------------------------------
 ;; Extend either list and everything below follows: capture prompts,
 ;; agenda groups, timeblock colours.
 
 (defvar my/org-areas
-  '("routine" "home" "work" "coding" "road" "workouts" "fun" "system" "social")
-  "Areas of life. Used as Org CATEGORY and as a tag.
-Adding one here also needs a group in `org-super-agenda-groups' and a
-colour in `my/org-area-colors' (section 10).")
+  '("work" "tech" "training" "health" "home" "people" "mind"
+    "reading" "gaming" "watching" "music" "finance" "travel" "system")
+  "Areas of life: where time goes and what I am responsible for.
+Used as Org CATEGORY and as a tag. Every calendar block and every
+sprint goal has exactly one. Adding one here also needs a colour in
+`my/org-area-colors' (section 10); agenda groups follow by themselves.")
+
+(defvar my/org-area-keys
+  '(("work" . ?w) ("tech" . ?t) ("training" . ?b) ("health" . ?h)
+    ("home" . ?o) ("people" . ?p) ("mind" . ?m) ("reading" . ?r)
+    ("gaming" . ?g) ("watching" . ?v) ("music" . ?u) ("finance" . ?f)
+    ("travel" . ?j) ("system" . ?s))
+  "Fast-selection key of each area in the C-c C-q tag selector.")
 
 (defvar my/org-types
-  '("project" "knowledge" "calendar")
-  "Document types.")
+  '("project" "knowledge" "sprint" "log" "person" "checklist")
+  "Document types, the TYPE property of a file.
+  project    something with an end: projects/<area>/<name>/
+  knowledge  what I know, by DOMAIN, not area: knowledge/
+  sprint     one month: goals per area, weekly and monthly reviews: sprints/
+  log        a chronological record, one file per year: the calendar,
+             the training journal, the shift log
+  person     someone in my life: people/
+  checklist  a reusable list: templates/checklists/")
 
 ;; --- Knowledge vocabulary -------------------------
 ;; A knowledge note is described by properties in its file drawer:
@@ -444,8 +466,11 @@ and titles the group hub.")
 (defvar my/org-type-dirs
   '(("project"   . "projects")
     ("knowledge" . "knowledge")
-    ("calendar"  . "calendar"))
-  "Map a document type to its subdirectory under `my/org-dir'.")
+    ("sprint"    . "sprints")
+    ("person"    . "people"))
+  "Map a document type to its subdirectory under `my/org-dir'.
+Logs live where they belong: the calendar in calendar/, journals in
+their projects.")
 
 ;; Projects are split one level further, by area:
 ;;   projects/<area>/<name>/<name>.org + <name>/attachments/
@@ -461,7 +486,7 @@ and titles the group hub.")
   "Root of all Org content.")
 
 (dolist (dir (append (mapcar #'cdr my/org-type-dirs)
-                     '("archive" "templates")))
+                     '("calendar" "archive" "templates")))
   (make-directory (expand-file-name dir my/org-dir) t))
 
 (dolist (dir my/org-area-split-dirs)
@@ -485,19 +510,18 @@ and titles the group hub.")
 
 ;; --- Tags and properties --------------------------
 
-;; Types are mutually exclusive, areas are not enforced but listed
-;; for completion. C-c C-q on a heading opens the selector.
+;; Areas are mutually exclusive: picking one in C-c C-q drops another.
+;; Types live in the TYPE property; "project" stays a tag too, the
+;; project template sets it and agenda views filter on it.
 (setq org-tag-alist
       `((:startgroup)
-        ("project"   . ?p)
-        ("knowledge" . ?k)
-        ("calendar"  . ?C)
+        ,@(mapcar (lambda (a) (cons a (cdr (assoc a my/org-area-keys))))
+                  my/org-areas)
         (:endgroup)
         (:newline)
-        ,@(mapcar (lambda (a) (cons a nil)) my/org-areas)
-        (:newline)
-        ("someday" . ?s)
-        ("urgent"  . ?u)))
+        ("project")
+        ("someday" . ?y)
+        ("urgent"  . ?z)))
 
 ;; Allowed values offered by C-c C-x p (org-set-property)
 (setq org-global-properties
@@ -536,21 +560,28 @@ and titles the group hub.")
 ;; 10. Org capture, agenda and calendar
 ;; --------------------------------------------------
 
-;; --- Daily note paths -----------------------------
-;; One file per day: calendar/<YYYY>/<MM>/<YYYY-MM-DD>.org. Anything
-;; else under calendar/, such as events.org, is an ordinary calendar
-;; file and is always in the agenda.
+;; --- Calendar log ---------------------------------
+;; The calendar is a log: one file per year, calendar/<YYYY>.org, a
+;; datetree. Every day has two children:
+;;   * 2026
+;;   ** 2026-10 October
+;;   *** 2026-10-07 Wednesday
+;;   **** Schedule   time blocks, generated from a day template; the
+;;                   only part the generator ever rewrites
+;;   **** Notes      yours: quick notes, tasks and checklists from capture
+;; Planning weeks ahead is fine: future days are just more headings.
+;; Anything else directly in calendar/, such as events.org, is an
+;; ordinary calendar file and is always in the agenda.
 
 (defvar my/org-calendar-dir (expand-file-name "calendar" my/org-dir)
-  "Daily notes and other calendar files.")
+  "Yearly calendar logs and other calendar files.")
 
 (defvar my/org-template-dir (expand-file-name "templates" my/org-dir)
   "Day templates and, under checklists/, checklist templates.
 Not scanned by the agenda, excluded from org-roam.")
 
-(defconst my/org-day-file-regexp
-  "\\`\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\.org\\'"
-  "File name of a daily note; group 1 is its date.")
+(defvar my/org-sprint-dir (expand-file-name "sprints" my/org-dir)
+  "One file per monthly sprint, named YYYY-MM.org.")
 
 (defun my/org-date+ (time n)
   "Return TIME shifted by N days. Uses decoded time, so DST-safe."
@@ -568,85 +599,62 @@ Not scanned by the agenda, excluded from org-roam.")
   (let ((system-time-locale "C"))
     (format-time-string "%Y-%m-%d %a" date)))
 
-(defun my/org-day-file (date)
-  "Daily note file for DATE."
-  (expand-file-name (format-time-string "%Y/%m/%Y-%m-%d.org" date)
-                    my/org-calendar-dir))
+(defun my/org-calendar-file (year)
+  "Calendar log for YEAR, created with its header when missing."
+  (let ((file (expand-file-name (format "%d.org" year) my/org-calendar-dir)))
+    (unless (file-exists-p file)
+      (require 'org-id)
+      (make-directory my/org-calendar-dir t)
+      (write-region (format (concat ":PROPERTIES:\n"
+                                    ":ID:       %s\n"
+                                    ":TYPE:     log\n"
+                                    ":END:\n"
+                                    "#+title: Calendar %d\n"
+                                    "#+category: calendar\n")
+                            (org-id-new) year)
+                    nil file))
+    file))
 
-(defun my/org-day--date-of (file)
-  "Date of daily note FILE as YYYY-MM-DD; nil for any other file."
-  (let ((name (file-name-nondirectory file)))
-    (when (string-match my/org-day-file-regexp name)
-      (match-string 1 name))))
+(defun my/org-calendar-files ()
+  "Every Org file directly in the calendar folder."
+  (when (file-directory-p my/org-calendar-dir)
+    (directory-files my/org-calendar-dir t "\\`[^.].*\\.org\\'")))
 
-(defun my/org-day--files ()
-  "Every daily note, oldest first."
-  (sort (seq-filter #'my/org-day--date-of
-                    (directory-files-recursively my/org-calendar-dir "\\.org\\'"))
-        (lambda (a b)
-          (string< (my/org-day--date-of a) (my/org-day--date-of b)))))
+(defun my/org-sprint-files ()
+  "Every sprint file."
+  (when (file-directory-p my/org-sprint-dir)
+    (directory-files my/org-sprint-dir t "\\`[^.].*\\.org\\'")))
 
 ;; --- Which files the agenda scans -----------------
-;; Projects, calendar files and daily notes. A daily note older than
-;; `my/org-day-agenda-days' drops out, unless it still holds an open
-;; task: a task captured into a day is never lost, and the agenda does
-;; not slow down as the years of notes pile up. Knowledge files hold
-;; no scheduled items and are not scanned; org-roam still indexes
+;; Projects, calendar files and sprints. Knowledge files hold no
+;; scheduled items and are not scanned; org-roam still indexes
 ;; everything (section 14).
 
 (defvar my/org-agenda-exclude-regexp "/shift-log/reports/"
   "Files under projects/ the agenda skips: copies of entries kept elsewhere.")
 
-(defvar my/org-day-agenda-days 60
-  "Daily notes this many days old or newer are always in the agenda.")
-
-(defun my/org--open-todo-regexp ()
-  "Regexp matching a heading with a not-done TODO keyword.
-Called at startup too, before Org is loaded and before the keywords
-are set further down (TODO states): Org's default stands in then."
-  (let* ((seq (cdar (or (bound-and-true-p org-todo-keywords)
-                        '((sequence "TODO" "DONE")))))
-         (open (if (member "|" seq)
-                   (seq-take-while (lambda (k) (not (equal k "|"))) seq)
-                 (butlast seq))))
-    (concat "^\\*+ "
-            (regexp-opt (mapcar (lambda (k) (replace-regexp-in-string "(.*" "" k))
-                                open)
-                        t)
-            "\\b")))
-
 (defun my/org-agenda-files ()
   "Rebuild the agenda file list from disk."
-  (let ((since (format-time-string
-                "%Y-%m-%d"
-                (my/org-date+ (current-time) (- my/org-day-agenda-days))))
-        (open (my/org--open-todo-regexp)))
-    (append
-     (seq-remove (lambda (file) (string-match-p my/org-agenda-exclude-regexp file))
-                 (directory-files-recursively
-                  (expand-file-name "projects" my/org-dir) "\\.org\\'"))
-     (seq-remove #'my/org-day--date-of
-                 (directory-files-recursively my/org-calendar-dir "\\.org\\'"))
-     (seq-filter (lambda (file)
-                   (or (not (string< (my/org-day--date-of file) since))
-                       (with-temp-buffer
-                         (insert-file-contents file)
-                         (let ((case-fold-search nil))
-                           (re-search-forward open nil t)))))
-                 (my/org-day--files)))))
+  (append
+   (seq-remove (lambda (file) (string-match-p my/org-agenda-exclude-regexp file))
+               (directory-files-recursively
+                (expand-file-name "projects" my/org-dir) "\\.org\\'"))
+   (my/org-calendar-files)
+   (my/org-sprint-files)))
 
 (setq org-agenda-files (my/org-agenda-files))
 
 (defun my/org-agenda-refresh-files ()
-  "Pick up newly created project or calendar files."
+  "Pick up newly created project, calendar or sprint files."
   (interactive)
   (setq org-agenda-files (my/org-agenda-files))
   (message "Agenda files: %d" (length org-agenda-files)))
 
 ;; --- Capture --------------------------------------
-;; Everything quick lands in today's daily note, under Notes. Refile
-;; tasks to their projects with C-c C-w; the ones left in daily notes
-;; are listed by C-c a i and stay in the agenda until done.
+;; Everything quick lands under Notes of today in the calendar log.
+;; Refile tasks to their projects or sprint goals with C-c C-w; the ones
+;; left in the calendar are listed by C-c a i and stay in the agenda
+;; until done.
 ;; %(my/org-pick-area) asks for the area once and reuses the answer.
 
 (setq org-capture-templates
@@ -684,10 +692,14 @@ are set further down (TODO states): Org's default stands in then."
 
 ;; --- TODO states ----------------------------------
 
+;; The second sequence is for sprint goals: GOAL while the sprint runs,
+;; one of the final states at the monthly review.
 (setq org-todo-keywords
       '((sequence "TODO(t)" "NEXT(n)" "WAIT(w)"
-                  "|" "DONE(d)" "CANCELLED(c)"))
-      org-log-done nil
+                  "|" "DONE(d)" "CANCELLED(c)")
+        (sequence "GOAL(g)"
+                  "|" "MET(m)" "PARTIAL(p)" "MISSED(x)" "PAUSED(z)"))
+      org-log-done 'time                 ; CLOSED date, for the weekly review
       org-log-into-drawer nil)
 
 ;; C-c C-w moves a heading to any file in the agenda, with completion
@@ -732,21 +744,19 @@ are set further down (TODO states): Org's default stands in then."
   :config
   ;; Everything with a time of day lands in the first group and is laid
   ;; out on the time grid. The area groups below hold only untimed
-  ;; items: tasks without an hour, deadlines, tasks in daily notes.
+  ;; items: tasks without an hour, deadlines, tasks in the calendar.
+  ;; One group per area, in the order of `my/org-areas'.
   (setq org-super-agenda-groups
-        '((:name "Schedule"   :time-grid t         :order 1)
-          (:name "Overdue"    :deadline past       :order 2)
-          (:name "Due today"  :deadline today      :order 3)
-          (:name "Work"       :category "work"     :order 10)
-          (:name "Coding"     :category "coding"   :order 11)
-          (:name "System"     :category "system"   :order 12)
-          (:name "Home"       :category "home"     :order 13)
-          (:name "Workouts"   :category "workouts" :order 14)
-          (:name "Fun"        :category "fun"      :order 15)
-          (:name "Social"     :category "social"   :order 16)
-          (:name "Road"       :category "road"     :order 20)
-          (:name "Routine"    :category "routine"  :order 21)
-          (:name "Daily notes" :file-path "/calendar/" :order 30)))
+        (append
+         '((:name "Schedule"  :time-grid t   :order 1)
+           (:name "Overdue"   :deadline past :order 2)
+           (:name "Due today" :deadline today :order 3))
+         (seq-map-indexed (lambda (area i)
+                            (list :name (capitalize area)
+                                  :category area
+                                  :order (+ 10 i)))
+                          my/org-areas)
+         '((:name "Calendar" :file-path "/calendar/" :order 90))))
   (org-super-agenda-mode))
 
 ;; --- Custom views ---------------------------------
@@ -765,16 +775,34 @@ are set further down (TODO states): Org's default stands in then."
                      ((org-agenda-overriding-header "Work projects"))))
          ((org-agenda-category-filter-preset '("+work"))))
 
-        ("c" "Coding day"
+        ("t" "Tech day"
          ((agenda "" ((org-agenda-span 'day)))
-          (tags-todo "project|knowledge"
-                     ((org-agenda-overriding-header "Coding"))))
-         ((org-agenda-category-filter-preset '("+coding"))))
+          (tags-todo "project"
+                     ((org-agenda-overriding-header "Tech projects"))))
+         ((org-agenda-category-filter-preset '("+tech"))))
 
-        ("i" "Tasks in daily notes" alltodo ""
-         ((org-agenda-files (seq-filter #'my/org-day--date-of
-                                        (my/org-agenda-files)))
-          (org-agenda-overriding-header "Tasks in daily notes, to refile")))
+        ("g" "Sprint goals" todo "GOAL"
+         ((org-agenda-files (my/sprint-current-files))
+          (org-agenda-overriding-header "Goals of the current sprint")))
+
+        ("r" "Weekly review"
+         ((todo "GOAL"
+                ((org-agenda-files (my/sprint-current-files))
+                 (org-agenda-overriding-header "Sprint goals")))
+          (agenda "" ((org-agenda-span 7)
+                      (org-agenda-start-day "-6d")
+                      (org-agenda-use-time-grid nil)
+                      (org-agenda-start-with-log-mode '(closed))
+                      (org-agenda-show-log t)
+                      (org-agenda-overriding-header "Past 7 days")))
+          (agenda "" ((org-agenda-span 7)
+                      (org-agenda-start-day "+1d")
+                      (org-agenda-use-time-grid nil)
+                      (org-agenda-overriding-header "Next 7 days")))))
+
+        ("i" "Tasks in the calendar" alltodo ""
+         ((org-agenda-files (my/org-calendar-files))
+          (org-agenda-overriding-header "Tasks in the calendar, to refile")))
 
         ("P" "Active projects" tags "project+STATUS=\"active\""
          ((org-agenda-overriding-header "Active projects")))
@@ -785,19 +813,26 @@ are set further down (TODO states): Org's default stands in then."
 ;; --- Visual timeblocking --------------------------
 
 ;; org-timeblock wants a face NAME per tag, not a list of colours.
-;; One face per area, coloured from the Kanagawa palette. Routine and
-;; road are deliberately dim: they are background, not work. An area
-;; missing here is simply drawn in org-timeblock's default colours.
+;; One face per area. The first eight come from the old calendar
+;; palette (rest, home, work, system, coding, gym, social, fun, road);
+;; the rest are picked to stay apart from them. Light backgrounds get a
+;; dark text colour. An area missing here is drawn in org-timeblock's
+;; default colours.
 (defvar my/org-area-colors
-  '(("routine"  "#2a2a37" "#727169")
-    ("road"     "#2a2a37" "#727169")
-    ("work"     "#2d4f67" "#c8c093")
-    ("coding"   "#43242b" "#c8c093")
-    ("system"   "#49443c" "#c8c093")
-    ("home"     "#223249" "#c8c093")
-    ("workouts" "#2b3328" "#c8c093")
-    ("fun"      "#54536d" "#c8c093")
-    ("social"   "#3f3452" "#c8c093"))
+  '(("health"   "#445572" "#dcd7ba")   ; was rest
+    ("home"     "#555555" "#dcd7ba")
+    ("work"     "#846d51" "#f2ecbc")
+    ("system"   "#b2ac5a" "#1f1f28")
+    ("tech"     "#576c51" "#dcd7ba")   ; was coding
+    ("training" "#49645f" "#dcd7ba")   ; was gym
+    ("people"   "#643838" "#dcd7ba")   ; was social
+    ("watching" "#b23b3a" "#f2ecbc")   ; was fun
+    ("travel"   "#625a51" "#dcd7ba")   ; was road
+    ("reading"  "#5e5378" "#dcd7ba")
+    ("gaming"   "#7a4468" "#dcd7ba")
+    ("music"    "#9a5a73" "#f2ecbc")
+    ("mind"     "#6e7fa0" "#1f1f28")
+    ("finance"  "#b8853f" "#1f1f28"))
   "Area to (BACKGROUND FOREGROUND) for timeblocks.")
 
 (dolist (spec my/org-area-colors)
@@ -870,7 +905,7 @@ are set further down (TODO states): Org's default stands in then."
 
 ;; --- Rescan agenda files --------------------------
 ;; The file list is built at startup. Rebuild it whenever something
-;; reads it, so new projects and daily notes appear without a
+;; reads it, so new projects, sprints and calendar years appear without a
 ;; restart: the agenda and org-timeblock.
 (defun my/org-agenda-files-refresh (&rest _)
   "Rebuild `org-agenda-files' from disk."
@@ -888,7 +923,7 @@ are set further down (TODO states): Org's default stands in then."
 ;; Headings in it are allowed: they are shifted to wherever the list
 ;; lands. A new file is a new checklist; C-c K opens one by name and
 ;; starts a new one when the name is unknown. A list is put to use:
-;;   C-c c k              into today's daily note, under Notes
+;;   C-c c k              into today in the calendar, under Notes
 ;;   C-c k                as the last child of the heading at point,
 ;;                        in any Org file; with C-u, the bare items
 ;;                        at point, e.g. inside a block
@@ -1008,101 +1043,104 @@ With BARE (\\[universal-argument]), insert only the items, at point."
 (global-set-key (kbd "C-c k") #'my/checklist-insert)
 (global-set-key (kbd "C-c K") #'my/checklist-edit)
 
-;; --- Daily notes ----------------------------------
+;; --- Days in the calendar log ---------------------
 ;;
-;;   calendar/<YYYY>/<MM>/<YYYY-MM-DD>.org
-;;
-;; A daily note is an org-roam node (TYPE calendar), titled with its
-;; date, so a note can link to a day and a day shows its backlinks.
-;; It has two top-level headings:
-;;   Schedule  time blocks, generated from a day template; the only
-;;             part the generator ever rewrites
-;;   Notes     yours: quick notes, tasks and checklists from capture
-;;
-;;   C-c j j  today          C-c j n / C-c j p  next / previous note
+;;   C-c j j  today          C-c j n / C-c j p  next / previous day
 ;;   C-c j d  any date       C-c j g            schedule for a day
 ;;   C-c j w  schedule for a week, C-c j W for several weeks
 ;;
-;; A note is created as soon as it is opened or captured into.
+;; A day opens narrowed to itself; C-x n w shows the whole year. A day
+;; and its Schedule and Notes are created as soon as it is opened or
+;; captured into.
 
-(defun my/org-day--skeleton (date)
-  "Text of a new daily note for DATE."
-  (concat ":PROPERTIES:\n"
-          ":ID:       " (org-id-new) "\n"
-          ":TYPE:     calendar\n"
-          ":END:\n"
-          "#+title: " (my/org-day--stamp date) "\n\n"
-          "* Schedule\n"
-          "* Notes\n"))
+(defun my/org-day--goto (date)
+  "Make DATE's calendar buffer current, point on DATE's day heading.
+The buffer is widened; missing year, month and day are created."
+  (require 'org-datetree)
+  (let ((d (decode-time date)))
+    (set-buffer (find-file-noselect
+                 (my/org-calendar-file (decoded-time-year d))))
+    (widen)
+    (let ((system-time-locale "C"))     ; English day names
+      (org-datetree-find-date-create
+       (list (decoded-time-month d) (decoded-time-day d) (decoded-time-year d))))
+    (point)))
 
-(defun my/org-day--buffer (date)
-  "Buffer visiting DATE's daily note, which is created when missing."
-  (let ((file (my/org-day-file date)))
-    (make-directory (file-name-directory file) t)
-    (with-current-buffer (find-file-noselect file)
-      (when (= (buffer-size) 0)
-        (insert (my/org-day--skeleton date))
-        (save-buffer))
-      (current-buffer))))
+(defun my/org-day--child (name)
+  "Position of the child NAME of the day heading at point.
+A missing Schedule is created first under the day, any other child
+last. Point stays on the day heading."
+  (let* ((day (point))
+         (level (1+ (org-current-level)))
+         (end (save-excursion (org-end-of-subtree t t) (point)))
+         (case-fold-search nil))
+    (or (save-excursion
+          (when (re-search-forward
+                 (format "^\\*\\{%d\\} %s\\(?:[ \t]\\|$\\)" level (regexp-quote name))
+                 end t)
+            (match-beginning 0)))
+        (save-excursion
+          (if (equal name "Schedule")
+              (progn (goto-char day) (forward-line 1))
+            (goto-char end))
+          (unless (bolp) (insert "\n"))
+          (prog1 (point)
+            (insert (make-string level ?*) " " name "\n"))))))
 
-(defun my/org-day--heading (name)
-  "Position of top-level heading NAME in this buffer, nil if absent."
-  (save-excursion
-    (goto-char (point-min))
-    (let ((case-fold-search nil))
-      (when (re-search-forward
-             (format "^\\* %s\\(?:[ \t]\\|$\\)" (regexp-quote name)) nil t)
-        (match-beginning 0)))))
+(defun my/org-day--ensure (date)
+  "Go to DATE's day heading, Schedule and Notes under it. Return point."
+  (let ((pos (my/org-day--goto date)))
+    (my/org-day--child "Schedule")
+    (my/org-day--child "Notes")
+    (goto-char pos)))
 
 (defun my/org-day-goto-notes ()
-  "Capture target: the Notes heading of today's daily note."
-  (set-buffer (my/org-day--buffer (current-time)))
-  (widen)
-  (goto-char (or (my/org-day--heading "Notes")
-                 (progn (goto-char (point-max))
-                        (unless (bolp) (insert "\n"))
-                        (save-excursion (insert "* Notes\n"))
-                        (point)))))
+  "Capture target: the Notes heading of today in the calendar log."
+  (my/org-day--ensure (current-time))
+  (goto-char (my/org-day--child "Notes")))
 
 (defun my/org-day-visit (date)
-  "Open DATE's daily note."
-  (pop-to-buffer-same-window (my/org-day--buffer date)))
+  "Open DATE in its calendar log, narrowed to that day."
+  (let* ((pos (my/org-day--ensure date))
+         (buffer (current-buffer)))
+    (pop-to-buffer-same-window buffer)
+    (widen)
+    (goto-char pos)
+    (org-fold-show-subtree)
+    (org-narrow-to-subtree)))
 
 (defun my/org-day-today ()
-  "Open today's daily note."
+  "Open today in the calendar log."
   (interactive)
   (my/org-day-visit (current-time)))
 
 (defun my/org-day-goto (date)
-  "Open the daily note of DATE, picked in the calendar."
+  "Open DATE, picked in the calendar, in the calendar log."
   (interactive (list (org-read-date nil t nil "Day: ")))
   (my/org-day-visit date))
 
-(defun my/org-day--neighbour (n)
-  "Open the existing daily note N notes after this one, before if N < 0.
-Outside a daily note, count from today."
-  (let* ((here (or (and buffer-file-name (my/org-day--date-of buffer-file-name))
-                   (format-time-string "%Y-%m-%d")))
-         (files (my/org-day--files))
-         (side (if (> n 0)
-                   (seq-filter (lambda (f) (string< here (my/org-day--date-of f)))
-                               files)
-                 (reverse (seq-filter (lambda (f) (string< (my/org-day--date-of f) here))
-                                      files))))
-         (file (nth (1- (abs n)) side)))
-    (if file
-        (find-file file)
-      (user-error "No %s daily note" (if (> n 0) "later" "earlier")))))
+(defun my/org-day--date-at-point ()
+  "Date of the calendar day at point, nil outside a calendar log."
+  (when (and buffer-file-name
+             (file-in-directory-p buffer-file-name my/org-calendar-dir))
+    (save-excursion
+      (save-restriction
+        (widen)
+        (end-of-line)
+        (when (re-search-backward
+               "^\\*+ \\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\b" nil t)
+          (org-time-string-to-time (match-string 1)))))))
 
 (defun my/org-day-next (n)
-  "Open the next existing daily note, or the N-th one."
+  "Open the day after the one at point, or N days after; from today
+outside the calendar."
   (interactive "p")
-  (my/org-day--neighbour n))
+  (my/org-day-visit (my/org-date+ (or (my/org-day--date-at-point) (current-time)) n)))
 
 (defun my/org-day-previous (n)
-  "Open the previous existing daily note, or the N-th one back."
+  "Open the day before the one at point, or N days before."
   (interactive "p")
-  (my/org-day--neighbour (- n)))
+  (my/org-day-next (- n)))
 
 ;; --- Schedules from day templates -----------------
 ;;
@@ -1167,8 +1205,9 @@ here are still offered by `my/org-day-generate'.")
       (mapcar (lambda (name) (cons name (my/org-template--title name))) names))
      nil t nil nil (my/org-day--default-template date))))
 
-(defun my/org-blocks--render (template date)
-  "Return TEMPLATE's blocks moved to DATE, or nil if TEMPLATE is missing."
+(defun my/org-blocks--render (template date level)
+  "Return TEMPLATE's blocks moved to DATE and to heading LEVEL.
+Nil when TEMPLATE is missing."
   (let ((file (expand-file-name (concat template ".org") my/org-template-dir))
         (stamp (my/org-day--stamp date)))
     (when (file-exists-p file)
@@ -1205,16 +1244,13 @@ here are still offered by `my/org-day-generate'.")
            (when-let ((area (seq-find (lambda (tag) (member tag my/org-areas))
                                       (org-get-tags nil t))))
              (org-set-property "CATEGORY" area))))
-        ;; Demote by one level to nest under Schedule
-        (goto-char (point-min))
-        (while (re-search-forward "^\\*" nil t)
-          (replace-match "**"))
-        (buffer-string)))))
+        ;; Shift the blocks down to LEVEL, under the day's Schedule
+        (my/checklist--shift (buffer-string) level)))))
 
-(defun my/org-day--schedule (date template)
-  "The Schedule heading of DATE with TEMPLATE's blocks under it, as text."
-  (let ((body (and template (my/org-blocks--render template date))))
-    (concat "* Schedule\n"
+(defun my/org-day--schedule (date template level)
+  "Schedule heading at LEVEL with TEMPLATE's blocks for DATE, as text."
+  (let ((body (and template (my/org-blocks--render template date (1+ level)))))
+    (concat (make-string level ?*) " Schedule\n"
             (if template
                 (format ":PROPERTIES:\n:TEMPLATE: %s\n:END:\n" template)
               "")
@@ -1223,74 +1259,60 @@ here are still offered by `my/org-day-generate'.")
                   (template (format "No template: %s\n" template))
                   (t "")))))
 
+(defun my/org-day--schedule-bounds ()
+  "With point on a day heading: (START END FILLED) of its Schedule.
+FILLED is non-nil when the Schedule has blocks."
+  (let* ((start (my/org-day--child "Schedule"))
+         (level (save-excursion (goto-char start) (org-current-level)))
+         (end (save-excursion (goto-char start) (org-end-of-subtree t t) (point)))
+         (filled (save-excursion
+                   (goto-char start)
+                   (forward-line 1)
+                   (re-search-forward (format "^\\*\\{%d\\} " (1+ level)) end t))))
+    (list start end filled)))
+
 (defun my/org-day--planned-p (date)
-  "Non-nil when DATE's daily note has blocks under its Schedule."
-  (let ((file (my/org-day-file date)))
-    (and (file-exists-p file)
-         (with-temp-buffer
-           (insert-file-contents file)
-           (let ((case-fold-search nil))
-             (and (re-search-forward "^\\* Schedule\\(?:[ \t]\\|$\\)" nil t)
-                  (re-search-forward "^\\*\\{1,2\\} " nil t)
-                  (string= (match-string 0) "** ")))))))
+  "Non-nil when DATE has blocks under its Schedule."
+  (save-current-buffer
+    (my/org-day--ensure date)
+    (nth 2 (my/org-day--schedule-bounds))))
 
 (defun my/org-day--put (date template &optional replace)
-  "Fill the Schedule of DATE's daily note from TEMPLATE and save it.
+  "Fill the Schedule of DATE from TEMPLATE and save the calendar.
 Only Schedule is touched. One that already has blocks is replaced
 when REPLACE is `yes', after a question when REPLACE is nil, and
-kept otherwise. Return the position of the Schedule heading."
-  (with-current-buffer (my/org-day--buffer date)
-    (prog1
-        (org-with-wide-buffer
-         (let ((pos (my/org-day--heading "Schedule")))
-           (if pos
-               (goto-char pos)
-             ;; No Schedule: in front of the first heading, else at the end
-             (goto-char (point-min))
-             (if (re-search-forward "^\\* " nil t)
-                 (goto-char (match-beginning 0))
-               (goto-char (point-max))
-               (unless (bolp) (insert "\n")))
-             (save-excursion (insert "* Schedule\n"))))
-         (let* ((end (save-excursion
-                       (forward-line 1)
-                       (if (re-search-forward "^\\* " nil t)
-                           (match-beginning 0)
-                         (point-max))))
-                (filled (save-excursion
-                          (forward-line 1)
-                          (re-search-forward "^\\*\\* " end t))))
-           (when (or (not filled)
-                     (eq replace 'yes)
-                     (and (null replace)
-                          (y-or-n-p
-                           (format "%s already planned (%s), replace? "
-                                   (my/org-day--stamp date)
-                                   (or (org-entry-get (point) "TEMPLATE")
-                                       "by hand")))))
-             (delete-region (point) end)
-             (save-excursion (insert (my/org-day--schedule date template)))))
-         (point))
-      (save-buffer))))
+kept otherwise."
+  (save-current-buffer
+    (my/org-day--ensure date)
+    (pcase-let ((`(,start ,end ,filled) (my/org-day--schedule-bounds)))
+      (goto-char start)
+      (when (or (not filled)
+                (eq replace 'yes)
+                (and (null replace)
+                     (y-or-n-p
+                      (format "%s already planned (%s), replace? "
+                              (my/org-day--stamp date)
+                              (or (org-entry-get (point) "TEMPLATE") "by hand")))))
+        (let ((level (org-current-level)))
+          (delete-region start end)
+          (goto-char start)
+          (insert (my/org-day--schedule date template level)))))
+    (save-buffer)))
 
 (defun my/org-day-generate (date template)
-  "Fill DATE's Schedule from TEMPLATE and open the daily note there.
+  "Fill DATE's Schedule from TEMPLATE and open that day.
 Interactively, asks for the date, then for the template."
   (interactive
    (let ((date (org-read-date nil t nil "Day: ")))
      (list date (my/org-read-template date))))
-  (let ((pos (my/org-day--put date template)))
-    (my/org-agenda-files-refresh)
-    (my/org-day-visit date)
-    (widen)
-    (goto-char pos)
-    (org-fold-show-subtree)
-    (recenter 0)))
+  (my/org-day--put date template)
+  (my/org-agenda-files-refresh)
+  (my/org-day-visit date))
 
 (defun my/org-week--fill (start)
   "Fill every day of the week containing START from `my/org-week-plan'.
-Days already planned are replaced or kept after one question. Notes
-opened only for this are closed again. Return the week's Monday."
+Days already planned are replaced or kept after one question.
+Return the week's Monday."
   (let* ((monday (my/org-monday-of start))
          (days (mapcar (lambda (n) (my/org-date+ monday n)) (number-sequence 0 6)))
          (planned (seq-count #'my/org-day--planned-p days))
@@ -1299,13 +1321,9 @@ opened only for this are closed again. Return the week's Monday."
                            (format "Week of %s: %d day(s) already planned, replace them? "
                                    (format-time-string "%Y-%m-%d" monday) planned)))
                       'yes
-                    'no))
-         (before (buffer-list)))
+                    'no)))
     (dolist (date days)
       (my/org-day--put date (my/org-day--default-template date) replace))
-    (dolist (buffer (buffer-list))
-      (unless (or (memq buffer before) (buffer-modified-p buffer))
-        (kill-buffer buffer)))
     monday))
 
 (defun my/org-week-generate (start)
@@ -1324,6 +1342,117 @@ opened only for this are closed again. Return the week's Monday."
   (my/org-agenda-files-refresh)
   (message "Generated %d week(s)" count))
 
+;; --- Sprints --------------------------------------
+;;
+;;   sprints/<YYYY-MM>.org   one month: goals, weekly reviews, monthly review
+;;
+;; A sprint runs from the first Monday of its month to the Sunday
+;; before the next month's first Monday: 4 or 5 whole weeks. That
+;; Sunday is the monthly review. A sprint file has a GOAL heading per
+;; area, tagged and categorised with it. Rewrite the heading into the
+;; goal itself, or set it to PAUSED. Small tasks live under their goal;
+;; a goal served by a project links to it, the tasks stay there.
+;;
+;;   C-c j s  the current sprint       C-c j S  create a sprint
+;;   C-c a g  goals of the current sprint
+;;   C-c a r  weekly review: goals, the past week, the next one
+
+(defun my/sprint--first-monday (year month)
+  "First Monday of MONTH in YEAR."
+  (let* ((first (encode-time (list 0 0 12 1 month year nil -1 nil)))
+         (dow (decoded-time-weekday (decode-time first))))
+    (my/org-date+ first (mod (- 1 dow) 7))))
+
+(defun my/sprint-start (time)
+  "First day of the sprint that TIME falls in."
+  (let* ((d (decode-time time))
+         (year (decoded-time-year d))
+         (month (decoded-time-month d))
+         (start (my/sprint--first-monday year month)))
+    (cond ((>= (time-to-days time) (time-to-days start)) start)
+          ((= month 1) (my/sprint--first-monday (1- year) 12))
+          (t (my/sprint--first-monday year (1- month))))))
+
+(defun my/sprint-end (start)
+  "Last day of the sprint beginning on START."
+  (let* ((d (decode-time start))
+         (year (decoded-time-year d))
+         (month (decoded-time-month d)))
+    (my/org-date+ (if (= month 12)
+                      (my/sprint--first-monday (1+ year) 1)
+                    (my/sprint--first-monday year (1+ month)))
+                  -1)))
+
+(defun my/sprint-file (start)
+  "Sprint file for the sprint beginning on START."
+  (expand-file-name (format-time-string "%Y-%m.org" start) my/org-sprint-dir))
+
+(defun my/sprint-current-files ()
+  "The current sprint file in a list, or nil when it does not exist."
+  (seq-filter #'file-exists-p
+              (list (my/sprint-file (my/sprint-start (current-time))))))
+
+(defun my/sprint--text (start)
+  "Text of a new sprint file for the sprint beginning on START."
+  (require 'org-id)
+  (let* ((end (my/sprint-end start))
+         (weeks (let ((day start) (n 1) (out '()))
+                  (while (<= (time-to-days day) (time-to-days end))
+                    (push (format "** Week %d: %s – %s\n" n
+                                  (format-time-string "%m-%d" day)
+                                  (format-time-string "%m-%d" (my/org-date+ day 6)))
+                          out)
+                    (setq day (my/org-date+ day 7) n (1+ n)))
+                  (nreverse out))))
+    (concat ":PROPERTIES:\n"
+            ":ID:       " (org-id-new) "\n"
+            ":TYPE:     sprint\n"
+            ":SPRINT_START: " (format-time-string "%Y-%m-%d" start) "\n"
+            ":SPRINT_END:   " (format-time-string "%Y-%m-%d" end) "\n"
+            ":END:\n"
+            "#+title: Sprint " (format-time-string "%Y-%m" start) "\n\n"
+            "* Goals\n"
+            (mapconcat
+             (lambda (area)
+               (concat "** GOAL " area " :" area ":\n"
+                       ":PROPERTIES:\n:CATEGORY: " area "\n:END:\n"
+                       "- Done when :: \n"
+                       "- Estimate :: \n"
+                       "- Project :: \n"))
+             my/org-areas "")
+            "* Weeks\n"
+            (mapconcat
+             (lambda (week)
+               (concat week "- Progress :: \n- In the way :: \n- Changes :: \n"))
+             weeks "")
+            "* Review\n"
+            "- Result :: \n"
+            "- Estimates vs reality :: \n"
+            "- Next sprint :: \n"
+            "- Lesson :: \n")))
+
+(defun my/sprint-new (time)
+  "Create the file of the sprint containing TIME, unless it exists; open it."
+  (interactive (list (org-read-date nil t nil "Any day of the sprint: ")))
+  (let* ((start (my/sprint-start time))
+         (file (my/sprint-file start)))
+    (unless (file-exists-p file)
+      (make-directory my/org-sprint-dir t)
+      (write-region (my/sprint--text start) nil file)
+      (when (fboundp 'org-roam-db-update-file)
+        (org-roam-db-update-file file)))
+    (my/org-agenda-files-refresh)
+    (find-file file)))
+
+(defun my/sprint-current ()
+  "Open the current sprint."
+  (interactive)
+  (let ((file (my/sprint-file (my/sprint-start (current-time)))))
+    (if (file-exists-p file)
+        (find-file file)
+      (user-error "No sprint file %s yet: C-c j S creates it"
+                  (file-name-nondirectory file)))))
+
 (global-set-key (kbd "C-c j j") #'my/org-day-today)
 (global-set-key (kbd "C-c j d") #'my/org-day-goto)
 (global-set-key (kbd "C-c j n") #'my/org-day-next)
@@ -1331,6 +1460,8 @@ opened only for this are closed again. Return the week's Monday."
 (global-set-key (kbd "C-c j g") #'my/org-day-generate)
 (global-set-key (kbd "C-c j w") #'my/org-week-generate)
 (global-set-key (kbd "C-c j W") #'my/org-weeks-generate)
+(global-set-key (kbd "C-c j s") #'my/sprint-current)
+(global-set-key (kbd "C-c j S") #'my/sprint-new)
 
 ;; --------------------------------------------------
 ;; 11. Org reading and writing
@@ -1348,26 +1479,87 @@ opened only for this are closed again. Return the week's Monday."
       org-pretty-entities t
       org-ellipsis "…")
 
-;; Screenshots and clipboard images straight into a note.
-;; Linux needs scrot and xclip on X11; on Wayland install grim + slurp
-;; and use "grim -g \"$(slurp)\" %s" instead. macOS has screencapture.
+;; --- Images ---------------------------------------
+;; Every image ends up as a plain [[file:...]] link to a copy in the
+;; note's image folder: the DIR keyword of the file (#+property: DIR),
+;; or, without one, attachments/<note>/ for knowledge notes and
+;; attachments/ next to the file elsewhere. No org-attach, no ATTACH
+;; tag, no #+DOWNLOADED line.
+;;
+;;   C-c v    paste HTML from the browser; images stay web links
+;;   C-c V    download the web images (region, else whole buffer)
+;;   C-c i s  screenshot of a screen area
+;;   C-c i c  image on the clipboard ("Copy image" in a browser)
+;;   C-c i y  image URL on the clipboard ("Copy image address")
+;;   C-c i f  image file from disk
+;;   drag an image file or a browser image into an Org buffer
+;;
+;; Programs: pandoc everywhere. Linux under Wayland (the Ubuntu
+;; default): wl-clipboard and gnome-screenshot. Linux under X11: xclip
+;; and gnome-screenshot or scrot. macOS: nothing, it is built in.
+
+(defun my/org-note-file ()
+  "File of the current note; works in capture buffers too."
+  (or (buffer-file-name (or (buffer-base-buffer) (current-buffer)))
+      (user-error "This buffer is not visiting a file")))
+
+(defun my/org-image-dir ()
+  "Absolute image folder of the current note.
+Read straight from the file's #+property: DIR line, so a capture
+buffer whose template has just added that line sees it too."
+  (let* ((file (my/org-note-file))
+         (dir (with-current-buffer (or (buffer-base-buffer) (current-buffer))
+                (org-with-wide-buffer
+                 (goto-char (point-min))
+                 (let ((case-fold-search t))
+                   (when (re-search-forward
+                          "^#\\+property:[ \t]+DIR[ \t]+\\(.+?\\)[ \t]*$" nil t)
+                     (match-string-no-properties 1)))))))
+    (expand-file-name
+     (or dir
+         (if (string-prefix-p (file-name-as-directory
+                               (expand-file-name "knowledge" my/org-dir))
+                              (expand-file-name file))
+             (concat "attachments/" (file-name-base file))
+           "attachments"))
+     (file-name-directory file))))
+
+(defun my/org-download--to-note-dir (orig &rest args)
+  "Run org-download's ORIG with the current note's image folder."
+  (let ((org-download-image-dir (my/org-image-dir)))
+    (make-directory org-download-image-dir t)
+    (apply orig args)))
+
 (use-package org-download
   :after org
+  :hook (org-mode . org-download-enable)   ; drag and drop
   :bind (:map org-mode-map
               ("C-c i s" . org-download-screenshot)
+              ("C-c i c" . org-download-clipboard)
               ("C-c i y" . org-download-yank))
   :config
-  ;; Screenshots go through org-attach, so they land in the note's own
-  ;; attachments folder and survive the note being moved.
-  (setq org-download-method 'attach
+  (setq org-download-method 'directory
         org-download-heading-lvl nil
+        org-download-annotate-function (lambda (_link) "")
         org-download-screenshot-method
-        (if (eq system-type 'darwin) "screencapture -i %s" "scrot -s %s")))
+        (cond ((eq system-type 'darwin) "screencapture -i %s")
+              ((executable-find "gnome-screenshot") "gnome-screenshot -a -f %s")
+              (t "scrot -s %s")))
+  ;; Every org-download command ends in org-download-image: point it at
+  ;; the note's image folder.
+  (advice-add 'org-download-image :around #'my/org-download--to-note-dir))
+
+(defun my/org-insert-image-file (file)
+  "Copy image FILE into the note's image folder and link it at point."
+  (interactive (list (read-file-name "Image: " "~/Downloads/" nil t)))
+  (require 'org-download)
+  (org-download-image (expand-file-name file)))
 
 ;; --- Attachments ----------------------------------
-;; Storage location comes from the :DIR: property set by the capture
-;; templates, not from an ID-keyed store: every note keeps its files
-;; in a plain attachments/ folder next to it.
+;; C-c C-a, for files that are not images in the text: PDFs, archives,
+;; workout photos. Storage location comes from the DIR property set by
+;; the capture templates, the same folder the image commands use. The
+;; ATTACH tag it sets is what the workout measurement view looks for.
 
 (use-package org-attach
   :ensure nil                          ; built into Org
@@ -1380,6 +1572,12 @@ opened only for this are closed again. Return the week's Monday."
   (org-attach-preferred-new-method 'dir)
   (org-attach-dir-relative t)          ; store DIR as a relative path
   (org-attach-archive-delete 'query))
+
+;; A capture template adds its #+property lines after Org has read the
+;; buffer's keywords, so DIR stays invisible during the capture and
+;; org-attach falls back to its ID store: data/<xx>/<id>/ folders.
+;; Re-read the keywords once the template is in.
+(add-hook 'org-capture-mode-hook #'org-set-regexps-and-options)
 
 ;; --------------------------------------------------
 ;; 12. Org export and import
@@ -1426,6 +1624,7 @@ opened only for this are closed again. Return the week's Monday."
 
 (defun my/org-paste-html ()
   "Paste the clipboard as Org markup, converting from HTML via pandoc.
+Images stay web links; C-c V downloads them into the note.
 Falls back to a plain yank when the clipboard carries no HTML."
   (interactive)
   (let ((html (my/clipboard-html)))
@@ -1450,21 +1649,66 @@ Falls back to a plain yank when the clipboard carries no HTML."
   :after org
   :custom (org-display-remote-inline-images 'cache))
 
-(defun my/org-localize-images ()
-  "Download every remote image in the buffer into the note's attachments
-and rewrite its link to point at the local copy."
-  (interactive)
-  (require 'org-download)
-  (save-excursion
-    (goto-char (point-min))
-    (let ((count 0)
-          (rx "\\[\\[\\(https?://[^]]+?\\.\\(?:png\\|jpe?g\\|gif\\|webp\\|svg\\)\\)\\]\\]"))
-      (while (re-search-forward rx nil t)
-        (let ((url (match-string 1)))
-          (replace-match "")
-          (org-download-image url)
-          (setq count (1+ count))))
-      (message "Localized %d image(s)" count))))
+;; C-c V: web images into the note. Catches [[URL]] and pandoc's
+;; [[PAGE][IMAGE-URL]], URLs with ?parameters too. A failed download
+;; (no network, 404, an HTML page instead of a picture) keeps its link.
+
+(defun my/org--image-url (url)
+  "URL when it is a web address of an image file, judged by extension."
+  (and url
+       (string-match-p "\\`https?://" url)
+       (string-match-p "\\.\\(?:png\\|jpe?g\\|gif\\|webp\\|svg\\)\\'"
+                       (car (split-string url "[?#]")))
+       url))
+
+(defun my/org--fetch-image (url dir)
+  "Download URL into DIR; return the file, or nil when no image arrived."
+  (make-directory dir t)
+  (let* ((name (file-name-nondirectory (car (split-string url "[?#]"))))
+         (file (expand-file-name name dir))
+         (n 1))
+    (while (file-exists-p file)
+      (setq file (expand-file-name
+                  (format "%s-%d.%s" (file-name-sans-extension name) n
+                          (file-name-extension name))
+                  dir)
+            n (1+ n)))
+    (condition-case nil
+        (progn (url-copy-file url file)
+               (if (image-type-from-file-header file)
+                   file
+                 (delete-file file)
+                 nil))
+      (error (ignore-errors (delete-file file)) nil))))
+
+(defun my/org-localize-images (&optional beg end)
+  "Download web images into the note's image folder, link local copies.
+Works on the region when active, else on the whole buffer."
+  (interactive (when (use-region-p) (list (region-beginning) (region-end))))
+  (require 'url)
+  (let ((dir (my/org-image-dir))
+        (base (file-name-directory (my/org-note-file)))
+        (found '()) (ok 0) (failed 0))
+    (save-excursion
+      (goto-char (or beg (point-min)))
+      (while (re-search-forward org-link-bracket-re end t)
+        (let ((url (or (my/org--image-url (match-string-no-properties 2))
+                       (and (null (match-string 2))
+                            (my/org--image-url (match-string-no-properties 1))))))
+          (when url
+            (push (list (match-beginning 0) (match-end 0) url) found))))
+      ;; `found' holds the last link first, so earlier positions stay valid
+      (pcase-dolist (`(,b ,e ,url) found)
+        (let ((file (my/org--fetch-image url dir)))
+          (if (not file)
+              (setq failed (1+ failed))
+            (delete-region b e)
+            (goto-char b)
+            (insert (format "[[file:%s]]" (file-relative-name file base)))
+            (setq ok (1+ ok))))))
+    (org-display-inline-images nil t)
+    (message "Images: %d saved%s" ok
+             (if (> failed 0) (format ", %d failed (links kept)" failed) ""))))
 
 ;; Fetch a whole page, strip the navigation and ads, insert as a subtree
 (use-package org-web-tools
@@ -1474,7 +1718,8 @@ and rewrite its link to point at the local copy."
 
 (with-eval-after-load 'org
   (define-key org-mode-map (kbd "C-c v") #'my/org-paste-html)
-  (define-key org-mode-map (kbd "C-c V") #'my/org-localize-images))
+  (define-key org-mode-map (kbd "C-c V") #'my/org-localize-images)
+  (define-key org-mode-map (kbd "C-c i f") #'my/org-insert-image-file))
 
 ;; --------------------------------------------------
 ;; 13. Org babel
@@ -1514,8 +1759,8 @@ and rewrite its link to point at the local copy."
   ;; Every Org file under ~/org is a potential node
   (org-roam-directory my/org-dir)
   (org-roam-completion-everywhere t)
-  ;; Skip archives and templates. Daily notes are indexed: a note can
-  ;; link to a day, and a day lists what links to it.
+  ;; Skip archives and templates. Calendar years are indexed as one
+  ;; node each.
   (org-roam-file-exclude-regexp
    '("/archive/" "/templates/" "/attachments/" "/\\.git/"))
   :bind (("C-c n f" . org-roam-node-find)
@@ -1939,6 +2184,12 @@ knowledge. Missing hubs are created afterwards."
          :target (file+head
                   "projects/%(my/org-pick-area)/${title}/${title}.org"
                   ":PROPERTIES:\n:TYPE: project\n:AREA: %(my/org-pick-area)\n:STATUS: active\n:STARTED: [%<%Y-%m-%d %a>]\n:FINISHED:\n:END:\n#+title: ${title}\n#+category: %(my/org-pick-area)\n#+filetags: :project:%(my/org-pick-area):\n#+property: DIR attachments\n\n* Tasks\n")
+         :unnarrowed t)
+
+        ("P" "person" plain "%?"
+         :target (file+head
+                  "people/${title}.org"
+                  ":PROPERTIES:\n:TYPE:     person\n:AREA:     %(my/org-pick-area)\n:END:\n#+title: ${title}\n#+filetags: :%(my/org-pick-area):\n\n* Notes\n")
          :unnarrowed t)))
 
 ;; C-c n e: the extracted subtree becomes a knowledge note. The path is
@@ -2104,7 +2355,9 @@ knowledge. Missing hubs are created afterwards."
      ("c" "~/org/calendar/"   "Calendar")
      ("t" "~/org/templates/"  "Templates")
      ("l" "~/org/templates/checklists/" "Checklists")
-     ("w" "~/org/projects/workouts/training/" "Training")
+     ("w" "~/org/projects/training/training/" "Training")
+     ("S" "~/org/sprints/"     "Sprints")
+     ("P" "~/org/people/"      "People")
      ("s" "~/org/projects/work/shift-log/" "Shift log")
      ("e" "~/dotfiles/"       "Dotfiles")
      ("d" "~/Downloads/"      "Downloads")))
@@ -2163,11 +2416,11 @@ knowledge. Missing hubs are created afterwards."
 ;; 18. Workouts
 ;; --------------------------------------------------
 ;;
-;;   projects/workouts/training/training.org          project file: recurring tasks
-;;   projects/workouts/training/journal/YYYY.org      one journal per year: every
-;;                                                    session and measurement, datetree
-;;   projects/workouts/training/programs/<name>-<date>.org  one file per program
-;;   projects/workouts/training/attachments/          photos
+;;   projects/training/training/training.org          project file: recurring tasks
+;;   projects/training/training/journal/YYYY.org      one journal per year (a log):
+;;                                                    every session and measurement
+;;   projects/training/training/programs/<name>-<date>.org  one file per program
+;;   projects/training/training/attachments/          photos
 ;;
 ;; A program is never edited into the next one: a new program is a new
 ;; file, and the date at the end of its name is its first day. The
@@ -2190,7 +2443,7 @@ knowledge. Missing hubs are created afterwards."
 ;; session: session RPE, pain, injury.
 
 (defvar my/workout-dir
-  (expand-file-name "projects/workouts/training" my/org-dir)
+  (expand-file-name "projects/training/training" my/org-dir)
   "Training project folder.")
 
 (defvar my/workout-journal-dir (expand-file-name "journal" my/workout-dir)
@@ -2265,7 +2518,7 @@ START-DAY is the absolute day number of the date ending the file name."
     (unless (file-exists-p file)
       (make-directory my/workout-journal-dir t)
       (write-region (format (concat "#+title: Training journal %d\n"
-                                    "#+category: workouts\n"
+                                    "#+category: training\n"
                                     "#+property: DIR ../attachments\n")
                             year)
                     nil file))
@@ -2666,6 +2919,14 @@ A horizontal rule separates results done under different programs."
             (my/workout--item "Injury")))
     "SESSION={.}/DONE")))
 
+(defun my/workout--photo-p ()
+  "Non-nil when this entry has attachments or links an image file."
+  (or (member "ATTACH" (org-get-tags nil t))
+      (save-excursion
+        (re-search-forward
+         "\\[\\[file:[^]]+\\.\\(?:png\\|jpe?g\\|gif\\|webp\\|heic\\)\\]"
+         (org-entry-end-position) t))))
+
 (defun my/workout-measurements ()
   "Show every measurement entry as one table, oldest first."
   (interactive)
@@ -2677,7 +2938,7 @@ A horizontal rule separates results done under different programs."
       (append (list (my/workout--date))
               (mapcar (lambda (m) (or (org-entry-get nil (car m)) ""))
                       my/workout-measures)
-              (list (if (member "ATTACH" (org-get-tags nil t)) "yes" ""))))
+              (list (if (my/workout--photo-p) "yes" ""))))
     "measure")))
 
 ;; --- Capture --------------------------------------
@@ -2691,7 +2952,7 @@ A horizontal rule separates results done under different programs."
 The entry starts with the session items; BODY follows them directly.
 With DELOAD, the entry is tagged deload in a program's deload week."
   `(,key ,title entry (function my/workout--target)
-         ,(concat "* TODO " title " :workouts:"
+         ,(concat "* TODO " title " :training:"
                   (if deload "%(my/workout-deload-tag)" "") "\n"
                   "SCHEDULED: %(my/workout-scheduled)\n"
                   ":PROPERTIES:\n"
